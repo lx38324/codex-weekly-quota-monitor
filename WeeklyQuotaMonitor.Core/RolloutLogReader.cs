@@ -1,16 +1,18 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace WeeklyQuotaMonitor.Core;
 
 /// <summary>
 /// 按持久化字节游标增量读取 Codex rollout JSONL，并关联本地模型响应与 token_count。
 /// </summary>
-public sealed class RolloutLogReader
+public sealed partial class RolloutLogReader
 {
-    public const int CurrentServiceTierTrackingVersion = 1;
+    public const int CurrentServiceTierTrackingVersion = 2;
     public const int CurrentResponseAssociationTrackingVersion = 1;
+    private const int SessionHeaderPrefixBytes = 4096;
 
     /// <summary>
     /// 首次启动时把已有日志设为基线；仅扫描近期文件内容以保留正在进行响应的模型上下文。
@@ -27,12 +29,14 @@ public sealed class RolloutLogReader
 
         MigrateServiceTierTrackingState(state);
         MigrateResponseAssociationTrackingState(state);
+        var configuredTier = ReadConfiguredServiceTierEvidence(sessionRoot);
         var malformedLines = 0;
         var contextCutoff = DateTime.UtcNow.AddHours(-contextLookbackHours);
         foreach (var path in EnumerateRolloutFiles(sessionRoot))
         {
             var info = new FileInfo(path);
             var cursor = new FileCursorState { CreationTimeUtcTicks = info.CreationTimeUtc.Ticks };
+            ApplyConfiguredServiceTier(path, cursor, configuredTier);
             if (info.LastWriteTimeUtc >= contextCutoff)
             {
                 var chunk = ReadCompleteLines(path, 0);
@@ -72,6 +76,7 @@ public sealed class RolloutLogReader
     {
         MigrateServiceTierTrackingState(state);
         MigrateResponseAssociationTrackingState(state);
+        var configuredTier = ReadConfiguredServiceTierEvidence(sessionRoot);
         var accumulator = new ScanAccumulator(includeSince);
         var paths = EnumerateRolloutFiles(sessionRoot).ToArray();
         var currentPaths = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
@@ -102,6 +107,11 @@ public sealed class RolloutLogReader
             {
                 ResetCursor(cursor, info.CreationTimeUtc.Ticks);
                 accumulator.AddRotatedFile();
+            }
+
+            if (string.Equals(cursor.CurrentServiceTier, "unknown", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyConfiguredServiceTier(path, cursor, configuredTier);
             }
 
             if (info.Length == cursor.Offset)
@@ -152,6 +162,7 @@ public sealed class RolloutLogReader
             windowStart,
             windowEnd,
             windowDurationMinutes);
+        var configuredTier = ReadConfiguredServiceTierEvidence(sessionRoot);
         var paths = EnumerateRolloutFiles(sessionRoot)
             .Where(path => new FileInfo(path).LastWriteTimeUtc >= windowStart.UtcDateTime)
             .ToArray();
@@ -165,10 +176,12 @@ public sealed class RolloutLogReader
                 ProcessLine(line, tierProbeCursor, tierProbe, null);
             }
 
-            var cursor = new FileCursorState
+            var explicitTier = tierProbe.GetConsistentExplicitServiceTier();
+            var cursor = new FileCursorState { CurrentServiceTier = explicitTier ?? "unknown" };
+            if (explicitTier is null && !tierProbe.HasExplicitServiceTierEvidence)
             {
-                CurrentServiceTier = tierProbe.GetConsistentExplicitServiceTier() ?? "unknown"
-            };
+                ApplyConfiguredServiceTier(path, cursor, configuredTier);
+            }
             accumulator.SetHistoricalSourceFile(path);
             foreach (var line in chunk.Lines)
             {
@@ -239,6 +252,7 @@ public sealed class RolloutLogReader
         foreach (var cursor in state.FileCursors.Values)
         {
             cursor.CurrentServiceTier = "unknown";
+            cursor.CurrentServiceTierFromConfig = false;
             ClearPendingResponse(cursor);
         }
 
@@ -281,6 +295,7 @@ public sealed class RolloutLogReader
         cursor.CreationTimeUtcTicks = creationTimeUtcTicks;
         cursor.CurrentModel = string.Empty;
         cursor.CurrentServiceTier = "unknown";
+        cursor.CurrentServiceTierFromConfig = false;
         ClearPendingResponse(cursor);
     }
 
@@ -464,6 +479,7 @@ public sealed class RolloutLogReader
 
         var responseModel = cursor.PendingResponseModel;
         var responseServiceTier = cursor.PendingResponseServiceTier;
+        var responseServiceTierFromConfig = cursor.PendingResponseServiceTierFromConfig;
         ClearPendingResponse(cursor);
         if (accumulator is null)
         {
@@ -483,7 +499,12 @@ public sealed class RolloutLogReader
             }
         }
 
-        accumulator.Add(responseTimestamp, responseModel, responseServiceTier, usage);
+        accumulator.Add(
+            responseTimestamp,
+            responseModel,
+            responseServiceTier,
+            responseServiceTierFromConfig,
+            usage);
         return true;
     }
 
@@ -530,6 +551,7 @@ public sealed class RolloutLogReader
         }
 
         cursor.CurrentServiceTier = serviceTier;
+        cursor.CurrentServiceTierFromConfig = false;
         accumulator?.RecordExplicitServiceTier(serviceTier);
         if (modelName is not null)
         {
@@ -585,6 +607,7 @@ public sealed class RolloutLogReader
         if (explicitServiceTier is not null)
         {
             cursor.CurrentServiceTier = explicitServiceTier;
+            cursor.CurrentServiceTierFromConfig = false;
             accumulator?.RecordExplicitServiceTier(explicitServiceTier);
         }
 
@@ -630,6 +653,7 @@ public sealed class RolloutLogReader
         cursor.PendingModelResponse = true;
         cursor.PendingResponseModel = cursor.CurrentModel;
         cursor.PendingResponseServiceTier = cursor.CurrentServiceTier;
+        cursor.PendingResponseServiceTierFromConfig = cursor.CurrentServiceTierFromConfig;
     }
 
     /// <summary>
@@ -641,6 +665,7 @@ public sealed class RolloutLogReader
         cursor.PendingModelResponse = false;
         cursor.PendingResponseModel = string.Empty;
         cursor.PendingResponseServiceTier = string.Empty;
+        cursor.PendingResponseServiceTierFromConfig = false;
     }
 
     /// <summary>
@@ -740,9 +765,183 @@ public sealed class RolloutLogReader
     }
 
     /// <summary>
+    /// 读取 sessions 同级 config.toml 中明确配置的默认服务层级及其最后生效时间。
+    /// </summary>
+    /// <param name="sessionRoot">Codex sessions 根目录。</param>
+    /// <returns>存在且可按公开计价口径解释时返回配置证据；没有显式配置时返回 null。</returns>
+    private static ConfiguredServiceTierEvidence? ReadConfiguredServiceTierEvidence(string sessionRoot)
+    {
+        var absoluteSessionRoot = Path.GetFullPath(sessionRoot);
+        var codexRoot = Path.GetDirectoryName(absoluteSessionRoot)
+            ?? throw new InvalidDataException($"无法从 sessions 路径解析 Codex 配置目录：{absoluteSessionRoot}");
+        var configPath = Path.Combine(codexRoot, "config.toml");
+        if (!File.Exists(configPath))
+        {
+            return null;
+        }
+
+        string? configuredTier = null;
+        var atTopLevel = true;
+        foreach (var line in File.ReadLines(configPath))
+        {
+            var trimmed = line.Trim().TrimStart('\uFEFF');
+            if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+            {
+                continue;
+            }
+
+            if (trimmed.StartsWith('['))
+            {
+                atTopLevel = false;
+                continue;
+            }
+
+            if (!atTopLevel)
+            {
+                continue;
+            }
+
+            var match = ConfigServiceTierLinePattern().Match(trimmed);
+            if (!match.Success)
+            {
+                if (trimmed.StartsWith("service_tier", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException($"无法解析 config.toml 的 service_tier：{trimmed}");
+                }
+
+                continue;
+            }
+
+            if (configuredTier is not null)
+            {
+                throw new InvalidDataException("config.toml 顶层重复定义 service_tier。");
+            }
+
+            configuredTier = NormalizeConfiguredServiceTier(match.Groups["tier"].Value);
+        }
+
+        return configuredTier is null
+            ? null
+            : new(configuredTier, new DateTimeOffset(File.GetLastWriteTimeUtc(configPath)));
+    }
+
+    /// <summary>
+    /// 在配置早于会话创建且当前没有显式层级时，把配置层级作为可审计证据写入文件游标。
+    /// </summary>
+    /// <param name="path">rollout JSONL 绝对路径。</param>
+    /// <param name="cursor">需要补充初始层级的文件游标。</param>
+    /// <param name="configuredTier">本轮只读取一次的 config.toml 层级证据。</param>
+    /// <returns>成功应用配置证据时返回 true。</returns>
+    private static bool ApplyConfiguredServiceTier(
+        string path,
+        FileCursorState cursor,
+        ConfiguredServiceTierEvidence? configuredTier)
+    {
+        if (configuredTier is null)
+        {
+            return false;
+        }
+
+        var sessionStartedAt = ReadSessionStartedAt(path);
+        if (sessionStartedAt is null || configuredTier.WrittenAt > sessionStartedAt.Value)
+        {
+            return false;
+        }
+
+        cursor.CurrentServiceTier = configuredTier.ServiceTier;
+        cursor.CurrentServiceTierFromConfig = true;
+        if (cursor.PendingModelResponse &&
+            string.Equals(cursor.PendingResponseServiceTier, "unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            cursor.PendingResponseServiceTier = configuredTier.ServiceTier;
+            cursor.PendingResponseServiceTierFromConfig = true;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 从 rollout 文件前缀读取 session_meta 的绝对创建时间，不解析或持久化用户对话内容。
+    /// </summary>
+    /// <param name="path">rollout JSONL 绝对路径。</param>
+    /// <returns>前缀包含有效 session_meta 时间时返回该时间，否则返回 null。</returns>
+    private static DateTimeOffset? ReadSessionStartedAt(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var bytes = new byte[Math.Min(SessionHeaderPrefixBytes, checked((int)Math.Min(stream.Length, int.MaxValue)))];
+        var length = stream.Read(bytes, 0, bytes.Length);
+        if (length == 0)
+        {
+            return null;
+        }
+
+        var prefix = Encoding.UTF8.GetString(bytes, 0, length);
+        if (!SessionMetaTypePattern().IsMatch(prefix))
+        {
+            return null;
+        }
+
+        var timestamp = SessionTimestampPattern().Match(prefix);
+        return timestamp.Success && DateTimeOffset.TryParse(
+            timestamp.Groups["timestamp"].Value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind,
+            out var parsed)
+            ? parsed
+            : null;
+    }
+
+    /// <summary>
+    /// 把 Codex 配置层级归一化为公开计价器支持的 Standard 或 Fast 请求值。
+    /// </summary>
+    /// <param name="serviceTier">config.toml 中的原始层级。</param>
+    /// <returns>default 或 priority。</returns>
+    private static string NormalizeConfiguredServiceTier(string serviceTier) =>
+        serviceTier.Trim().ToLowerInvariant() switch
+        {
+            "standard" or "default" or "auto" => "default",
+            "fast" or "priority" => "priority",
+            _ => throw new InvalidDataException($"config.toml 的 service_tier 无法按当前公开口径计价：{serviceTier}")
+        };
+
+    /// <summary>
+    /// 为展示层保留配置回填来源，避免把推导层级误报为 rollout 原生字段。
+    /// </summary>
+    /// <param name="normalizedServiceTier">定价器返回的 standard 或 fast。</param>
+    /// <param name="serviceTierFromConfig">是否由配置证据回填。</param>
+    /// <returns>带可选 config 来源标记的层级标签。</returns>
+    public static string FormatServiceTierEvidence(
+        string normalizedServiceTier,
+        bool serviceTierFromConfig) =>
+        serviceTierFromConfig ? $"{normalizedServiceTier}(config)" : normalizedServiceTier;
+
+    /// <summary>
+    /// 匹配 config.toml 顶层双引号 service_tier 标量。
+    /// </summary>
+    [GeneratedRegex(@"^\s*service_tier\s*=\s*""(?<tier>[^""]+)""\s*(?:#.*)?$", RegexOptions.IgnoreCase)]
+    private static partial Regex ConfigServiceTierLinePattern();
+
+    /// <summary>
+    /// 在 rollout 文件前缀中确认首条记录是 session_meta。
+    /// </summary>
+    [GeneratedRegex(@"""type""\s*:\s*""session_meta""", RegexOptions.IgnoreCase)]
+    private static partial Regex SessionMetaTypePattern();
+
+    /// <summary>
+    /// 从 rollout 文件前缀提取根级 timestamp 字符串。
+    /// </summary>
+    [GeneratedRegex(@"""timestamp""\s*:\s*""(?<timestamp>[^""]+)""", RegexOptions.IgnoreCase)]
+    private static partial Regex SessionTimestampPattern();
+
+    /// <summary>
     /// 保存一次文件读取形成的完整行和下一字节位置。
     /// </summary>
     private sealed record FileChunk(IReadOnlyList<string> Lines, long NextOffset);
+
+    /// <summary>
+    /// 保存 config.toml 明确层级及配置文件最后写入时刻，用于与会话创建时间建立证据顺序。
+    /// </summary>
+    private sealed record ConfiguredServiceTierEvidence(string ServiceTier, DateTimeOffset WrittenAt);
 
     /// <summary>
     /// 在一次扫描中累积可定价响应、不可定价响应、模型口径和数据质量统计。
@@ -824,6 +1023,11 @@ public sealed class RolloutLogReader
         /// <returns>唯一明确层级；没有证据或存在层级切换时返回 null。</returns>
         public string? GetConsistentExplicitServiceTier() =>
             _explicitServiceTiers.Count == 1 ? _explicitServiceTiers.Single() : null;
+
+        /// <summary>
+        /// 判断当前文件是否出现过任何显式服务层级，避免层级切换文件被全局配置错误回填。
+        /// </summary>
+        public bool HasExplicitServiceTierEvidence => _explicitServiceTiers.Count > 0;
 
         /// <summary>
         /// 从 token_count.payload.rate_limits 提取与目标窗口时长相同的 primary 或 secondary 候选。
@@ -912,11 +1116,13 @@ public sealed class RolloutLogReader
         /// <param name="timestamp">逐响应用量事件时间。</param>
         /// <param name="model">响应使用的实际模型。</param>
         /// <param name="serviceTier">响应记录的实际服务层级。</param>
+        /// <param name="serviceTierFromConfig">层级是否由会话创建前已生效的 config.toml 证据回填。</param>
         /// <param name="usage">逐响应 token 分类。</param>
         public void Add(
             DateTimeOffset timestamp,
             string model,
             string serviceTier,
+            bool serviceTierFromConfig,
             TokenUsage usage)
         {
             if (_historicalWindowEnd is DateTimeOffset historicalWindowEnd && timestamp > historicalWindowEnd)
@@ -937,7 +1143,10 @@ public sealed class RolloutLogReader
                     pricing.CostUsd,
                     pricing.OfficialLongContextCostUsd,
                     pricing.NormalizedServiceTier,
-                    pricing.CreditMultiplier));
+                    pricing.CreditMultiplier)
+                {
+                    ServiceTierRecoveredFromConfig = serviceTierFromConfig
+                });
             }
 
             if (!pricing.Success)
@@ -953,7 +1162,7 @@ public sealed class RolloutLogReader
             _officialLongContextCostUsd += pricing.OfficialLongContextCostUsd;
             _responseCount++;
             _models.Add(model);
-            _serviceTiers.Add(pricing.NormalizedServiceTier);
+            _serviceTiers.Add(FormatServiceTierEvidence(pricing.NormalizedServiceTier, serviceTierFromConfig));
             _creditMultipliers.Add($"{pricing.CreditMultiplier.ToString("0.###", CultureInfo.InvariantCulture)}x");
         }
 

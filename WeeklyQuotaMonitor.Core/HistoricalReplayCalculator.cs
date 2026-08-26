@@ -7,7 +7,7 @@ namespace WeeklyQuotaMonitor.Core;
 /// </summary>
 public static class HistoricalReplayCalculator
 {
-    public const int CurrentReplayVersion = 3;
+    public const int CurrentReplayVersion = 4;
     public const string HistoricalSampleSource = "historical-replay";
     private static readonly TimeSpan ResetClusterTolerance = TimeSpan.FromMinutes(1);
 
@@ -282,7 +282,9 @@ public static class HistoricalReplayCalculator
         var models = responses.Select(response => response.Model)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(model => model, StringComparer.OrdinalIgnoreCase);
-        var tiers = responses.Select(response => response.NormalizedServiceTier)
+        var tiers = responses.Select(response => RolloutLogReader.FormatServiceTierEvidence(
+                response.NormalizedServiceTier,
+                response.ServiceTierRecoveredFromConfig))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(tier => tier, StringComparer.OrdinalIgnoreCase);
         var multipliers = responses

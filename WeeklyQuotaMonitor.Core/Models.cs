@@ -110,9 +110,11 @@ public sealed class FileCursorState
     public long CreationTimeUtcTicks { get; set; }
     public string CurrentModel { get; set; } = string.Empty;
     public string CurrentServiceTier { get; set; } = "unknown";
+    public bool CurrentServiceTierFromConfig { get; set; }
     public bool PendingModelResponse { get; set; }
     public string PendingResponseModel { get; set; } = string.Empty;
     public string PendingResponseServiceTier { get; set; } = string.Empty;
+    public bool PendingResponseServiceTierFromConfig { get; set; }
 }
 
 /// <summary>
@@ -203,7 +205,10 @@ public sealed record HistoricalResponseFact(
     decimal ApiEquivalentUsd,
     decimal OfficialLongContextApiEquivalentUsd,
     string NormalizedServiceTier,
-    decimal CreditMultiplier);
+    decimal CreditMultiplier)
+{
+    public bool ServiceTierRecoveredFromConfig { get; init; }
+}
 
 /// <summary>
 /// 保存 rollout token_count 携带的一个周额度候选快照。

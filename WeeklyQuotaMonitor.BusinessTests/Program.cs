@@ -68,6 +68,9 @@ internal static class Program
             TestHistoricalFactsBackfillConsistentTier,
             TestHistoricalFactsDoNotBackfillMixedTier,
             TestHistoricalFactsWithoutTierRemainUnpriced,
+            TestConfiguredDefaultTierRecoversMissingHistoricalEvidence,
+            TestConfiguredFastTierRecoversWithMultiplier,
+            TestNewerConfigDoesNotRewriteOlderSessionTier,
             TestDelayedTierAppendTriggersRecoverableReplay,
             TestAuthoritativeCheckpointPreservesFirstObservation,
             TestHistoricalReplayExcludesResponsesAfterFirstObservation,
@@ -1248,6 +1251,75 @@ internal static class Program
     }
 
     /// <summary>
+    /// 验证会话创建前已生效的 default 配置能恢复断网日志的 Standard 层级并形成可见样本。
+    /// </summary>
+    private static void TestConfiguredDefaultTierRecoversMissingHistoricalEvidence()
+    {
+        var sessionAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var fixture = CreateConfiguredTierFixture("default", sessionAt.AddMinutes(-1), sessionAt, "gpt-5.6-sol");
+        var windowStart = sessionAt.AddMinutes(-1);
+        var windowEnd = sessionAt.AddMinutes(1);
+        var facts = new RolloutLogReader().ReadHistoricalFacts(fixture.SessionRoot, windowStart, windowEnd, 10080);
+        var resetAt = windowStart.AddMinutes(10080);
+        var snapshot = new RateLimitSnapshot(windowEnd, "codex", "Codex", 1m, 10080, resetAt);
+        var checkpoints = new[]
+        {
+            new AuthoritativeRateLimitCheckpoint(sessionAt.AddSeconds(-1), "codex", 0m, 10080, resetAt),
+            new AuthoritativeRateLimitCheckpoint(sessionAt.AddSeconds(3), "codex", 1m, 10080, resetAt)
+        };
+        var replay = HistoricalReplayCalculator.Build(snapshot, facts, checkpoints);
+
+        Equal(1, facts.Responses.Count, "配置回填场景应提取一条响应");
+        Equal(true, facts.Responses[0].PricingSucceeded, "会话创建前的 default 配置应恢复 Standard 定价");
+        Equal(true, facts.Responses[0].ServiceTierRecoveredFromConfig, "响应应记录 config 回填来源");
+        Equal(1, replay.Samples.Count, "恢复层级后 0% 到 1% 区间应形成样本");
+        Equal("standard(config)", replay.Samples[0].ServiceTiers, "样本必须显式标记配置回填来源");
+        Equal(0, replay.UnattributedIntervalCount, "已恢复区间不应继续显示为待归因点");
+        Directory.Delete(fixture.Root, true);
+    }
+
+    /// <summary>
+    /// 验证会话创建前已生效的 fast 配置恢复为 priority，并应用 Sol 的 2.5 倍额度倍率。
+    /// </summary>
+    private static void TestConfiguredFastTierRecoversWithMultiplier()
+    {
+        var sessionAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var fixture = CreateConfiguredTierFixture("fast", sessionAt.AddMinutes(-1), sessionAt, "gpt-5.6-sol");
+        var facts = new RolloutLogReader().ReadHistoricalFacts(
+            fixture.SessionRoot,
+            sessionAt.AddMinutes(-1),
+            sessionAt.AddMinutes(1),
+            10080);
+
+        Equal(1, facts.Responses.Count, "Fast 配置回填场景应提取一条响应");
+        Equal(true, facts.Responses[0].PricingSucceeded, "fast 配置应恢复可定价响应");
+        Equal("fast", facts.Responses[0].NormalizedServiceTier, "fast 配置应规范化为 Fast 层级");
+        Near(2.5m, facts.Responses[0].CreditMultiplier, 0.000001m, "Sol Fast 配置回填倍率");
+        Equal(true, facts.Responses[0].ServiceTierRecoveredFromConfig, "Fast 响应应记录 config 回填来源");
+        Directory.Delete(fixture.Root, true);
+    }
+
+    /// <summary>
+    /// 验证会话创建后才修改的配置不能反向改写旧响应层级，避免跨时间猜测。
+    /// </summary>
+    private static void TestNewerConfigDoesNotRewriteOlderSessionTier()
+    {
+        var sessionAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var fixture = CreateConfiguredTierFixture("default", sessionAt.AddMinutes(1), sessionAt, "gpt-5.6-sol");
+        var facts = new RolloutLogReader().ReadHistoricalFacts(
+            fixture.SessionRoot,
+            sessionAt.AddMinutes(-1),
+            sessionAt.AddMinutes(2),
+            10080);
+
+        Equal(1, facts.Responses.Count, "配置晚于会话时仍应保留响应事实");
+        Equal(false, facts.Responses[0].PricingSucceeded, "较新的配置不得反向回填旧会话");
+        Equal("unknown", facts.Responses[0].ServiceTier, "无法建立时间证据时必须继续失败关闭");
+        Equal(false, facts.Responses[0].ServiceTierRecoveredFromConfig, "失败关闭响应不得标记为配置恢复");
+        Directory.Delete(fixture.Root, true);
+    }
+
+    /// <summary>
     /// 验证百分比不变时，同一 rollout 后补唯一层级事件会改变受跟踪文件并使历史区间恢复。
     /// </summary>
     private static void TestDelayedTierAppendTriggersRecoverableReplay()
@@ -1590,6 +1662,44 @@ internal static class Program
         TokenUsage.Zero,
         1,
         "gpt-5.6-sol");
+
+    /// <summary>
+    /// 创建带显式 config.toml 层级和无层级 rollout 的测试目录，用于验证配置证据时间边界。
+    /// </summary>
+    /// <param name="configuredTier">写入 config.toml 的 default 或 fast。</param>
+    /// <param name="configWrittenAt">配置文件最后写入时刻。</param>
+    /// <param name="sessionAt">session_meta 记录的会话创建时刻。</param>
+    /// <param name="model">无层级响应使用的模型。</param>
+    /// <returns>测试根目录和其中的 sessions 根目录。</returns>
+    private static (string Root, string SessionRoot) CreateConfiguredTierFixture(
+        string configuredTier,
+        DateTimeOffset configWrittenAt,
+        DateTimeOffset sessionAt,
+        string model)
+    {
+        var root = CreateTemporaryDirectory();
+        var sessionRoot = Path.Combine(root, "sessions");
+        Directory.CreateDirectory(sessionRoot);
+        var configPath = Path.Combine(root, "config.toml");
+        File.WriteAllText(configPath, $"service_tier = \"{configuredTier}\"{Environment.NewLine}");
+        File.SetLastWriteTimeUtc(configPath, configWrittenAt.UtcDateTime);
+        File.WriteAllLines(Path.Combine(sessionRoot, "rollout-config-tier.jsonl"),
+        [
+            SessionMetaLine(sessionAt),
+            TurnContextWithoutTierLine(sessionAt.AddSeconds(1), model),
+            ResponseItemLine(sessionAt.AddSeconds(2)),
+            TokenCountLine(sessionAt.AddSeconds(3), 100_000, 80_000, 0, 5_000, 2_000)
+        ]);
+        return (root, sessionRoot);
+    }
+
+    /// <summary>
+    /// 创建包含会话创建时间的最小 session_meta JSONL 行。
+    /// </summary>
+    /// <param name="timestamp">会话创建时间。</param>
+    /// <returns>序列化后的单行 JSON。</returns>
+    private static string SessionMetaLine(DateTimeOffset timestamp) =>
+        JsonSerializer.Serialize(new { timestamp, type = "session_meta", payload = new { } });
 
     /// <summary>
     /// 创建测试用 turn_context JSONL 行。

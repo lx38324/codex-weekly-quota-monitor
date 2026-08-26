@@ -37,7 +37,7 @@ The main window contains:
 - **No long-context surcharge** uses public Standard API regular prices.
 - **Official >272K surcharge** applies the published 2× input-class and 1.5× output rule when request input exceeds 272K.
 
-Both apply recognized ChatGPT Fast credit multipliers. Unknown models, tiers, or unattributed intervals fail closed instead of being guessed.
+Both apply recognized ChatGPT Fast credit multipliers. If an offline or legacy log omits its tier, recovery requires explicit `config.toml` evidence that predates the session and is labeled `(config)`; all other unknown models, tiers, or intervals still fail closed.
 
 ## Privacy
 
