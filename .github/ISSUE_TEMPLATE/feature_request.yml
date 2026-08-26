@@ -1,0 +1,28 @@
+name: Feature request / 功能建议
+description: Propose a scoped user-facing improvement.
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 问题
+      description: Describe the user problem rather than only the desired implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / 建议行为
+    validations:
+      required: true
+  - type: textarea
+    id: accounting
+    attributes:
+      label: Accounting or privacy impact / 口径或隐私影响
+      description: Explain whether this changes pricing assumptions, attribution, stored data, or permissions.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance examples / 验收示例
+      description: Give concrete examples of what should be visible or measurable when complete.

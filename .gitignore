@@ -1,0 +1,28 @@
+# .NET 构建与 IDE 输出
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+TestResults/
+artifacts/
+
+# 本项目测试、发布与视觉验收输出
+release-test-output/
+test-output*/
+publish/
+release/
+dpi-layout-*.png
+
+# 本机运行数据和临时文件
+settings.json
+state.json
+runtime.log
+codex-runtime/
+*.installing.exe
+*.tmp
+
+# 操作系统文件
+Thumbs.db
+.DS_Store

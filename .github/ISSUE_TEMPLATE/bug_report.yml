@@ -1,0 +1,54 @@
+name: Bug report / 缺陷报告
+description: Report a reproducible monitoring, UI, installer, or data-quality issue.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先在“诊断”页复制非敏感摘要。不要上传凭据、对话正文或完整 rollout 文件。
+  - type: input
+    id: version
+    attributes:
+      label: Version / 版本
+      placeholder: 1.3.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows and scaling / Windows 与缩放
+      placeholder: Windows 11 24H2, 150%
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Actual behavior / 实际行为
+      description: What happened, including the visible status and timing.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction / 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics / 已脱敏诊断
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation / 隐私确认
+      options:
+        - label: I removed credentials, conversation content, usernames, and sensitive paths.
+          required: true

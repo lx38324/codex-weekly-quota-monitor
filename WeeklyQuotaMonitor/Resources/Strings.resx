@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ProductName" xml:space="preserve"><value>Codex Weekly Quota Monitor</value></data>
+  <data name="TabDashboard" xml:space="preserve"><value>Dashboard</value></data>
+  <data name="TabHistory" xml:space="preserve"><value>History</value></data>
+  <data name="TabSettings" xml:space="preserve"><value>Settings</value></data>
+  <data name="TabDiagnostics" xml:space="preserve"><value>Diagnostics</value></data>
+  <data name="TrayStarting" xml:space="preserve"><value>Codex quota: starting</value></data>
+  <data name="TrayRefresh" xml:space="preserve"><value>Refresh quota now</value></data>
+  <data name="TrayDetails" xml:space="preserve"><value>Show quick details</value></data>
+  <data name="TrayDashboard" xml:space="preserve"><value>Open dashboard</value></data>
+  <data name="TrayHistory" xml:space="preserve"><value>Open history</value></data>
+  <data name="TraySettings" xml:space="preserve"><value>Open settings…</value></data>
+  <data name="TrayData" xml:space="preserve"><value>Open data folder</value></data>
+  <data name="TrayExit" xml:space="preserve"><value>Exit</value></data>
+  <data name="DashboardTitle" xml:space="preserve"><value>Weekly quota overview</value></data>
+  <data name="DashboardSubtitle" xml:space="preserve"><value>Subscription percentage from Codex App Server; amounts are public Standard API equivalents.</value></data>
+  <data name="CardUsed" xml:space="preserve"><value>Used</value></data>
+  <data name="CardRemaining" xml:space="preserve"><value>Remaining</value></data>
+  <data name="CardReset" xml:space="preserve"><value>Resets</value></data>
+  <data name="CardSamples" xml:space="preserve"><value>Valid samples</value></data>
+  <data name="CardConnection" xml:space="preserve"><value>App Server</value></data>
+  <data name="Connected" xml:space="preserve"><value>Connected</value></data>
+  <data name="Disconnected" xml:space="preserve"><value>Disconnected</value></data>
+  <data name="Unknown" xml:space="preserve"><value>Unknown</value></data>
+  <data name="None" xml:space="preserve"><value>None</value></data>
+  <data name="EstimateBase" xml:space="preserve"><value>No long-context surcharge</value></data>
+  <data name="EstimateOfficial" xml:space="preserve"><value>Official &gt;272K surcharge</value></data>
+  <data name="WaitingSamples" xml:space="preserve"><value>Waiting for valid samples</value></data>
+  <data name="EstimateValue" xml:space="preserve"><value>About ${0:N2}</value></data>
+  <data name="EstimateWithPoints" xml:space="preserve"><value>About ${0:N2} · {1} points</value></data>
+  <data name="CurrentEstimateFormat" xml:space="preserve"><value>Current {0}: base {1}; official &gt;272K {2}</value></data>
+  <data name="SummaryFormat" xml:space="preserve"><value>Authoritative used {0} · latest valid amount point {1} · pending points {2} · samples {3} · archived {4} · sample cap ${5:N2}{6}</value></data>
+  <data name="FilterHint" xml:space="preserve"><value>; some or all samples are filtered by the cap—raise it in Settings</value></data>
+  <data name="RegressionLinear" xml:space="preserve"><value>linear regression</value></data>
+  <data name="RegressionSegmented" xml:space="preserve"><value>segmented regression</value></data>
+  <data name="RegressionGaussian" xml:space="preserve"><value>Gaussian aggregation</value></data>
+  <data name="SeriesBaseSamples" xml:space="preserve"><value>Base samples</value></data>
+  <data name="SeriesBaseRegression" xml:space="preserve"><value>Base regression</value></data>
+  <data name="SeriesOfficialSamples" xml:space="preserve"><value>Official long-context samples</value></data>
+  <data name="SeriesOfficialRegression" xml:space="preserve"><value>Official long-context regression</value></data>
+  <data name="ChartEmpty" xml:space="preserve"><value>No valid amount samples yet</value></data>
+  <data name="ChartAxisAmount" xml:space="preserve"><value>Estimated weekly quota (USD)</value></data>
+  <data name="TimeRangeAll" xml:space="preserve"><value>All</value></data>
+  <data name="TimeRange24Hours" xml:space="preserve"><value>24 hours</value></data>
+  <data name="TimeRange7Days" xml:space="preserve"><value>7 days</value></data>
+  <data name="TimeRange30Days" xml:space="preserve"><value>30 days</value></data>
+  <data name="GridTime" xml:space="preserve"><value>Local time</value></data>
+  <data name="GridUsed" xml:space="preserve"><value>Used %</value></data>
+  <data name="GridDelta" xml:space="preserve"><value>Δ %</value></data>
+  <data name="GridBaseInterval" xml:space="preserve"><value>Base interval $</value></data>
+  <data name="GridBaseWeekly" xml:space="preserve"><value>Base weekly $</value></data>
+  <data name="GridOfficialInterval" xml:space="preserve"><value>Official interval $</value></data>
+  <data name="GridOfficialWeekly" xml:space="preserve"><value>Official weekly $</value></data>
+  <data name="GridInput" xml:space="preserve"><value>Input</value></data>
+  <data name="GridCached" xml:space="preserve"><value>Cached input</value></data>
+  <data name="GridOutput" xml:space="preserve"><value>Output</value></data>
+  <data name="GridModels" xml:space="preserve"><value>Models</value></data>
+  <data name="GridTier" xml:space="preserve"><value>Tier</value></data>
+  <data name="GridMultiplier" xml:space="preserve"><value>Multiplier</value></data>
+  <data name="GridSource" xml:space="preserve"><value>Source</value></data>
+  <data name="GridPricing" xml:space="preserve"><value>Pricing version</value></data>
+  <data name="SourceLive" xml:space="preserve"><value>Live</value></data>
+  <data name="SourceReplay" xml:space="preserve"><value>Historical replay</value></data>
+  <data name="SettingsGeneral" xml:space="preserve"><value>General</value></data>
+  <data name="SettingsDataSource" xml:space="preserve"><value>Data sources</value></data>
+  <data name="SettingsSampling" xml:space="preserve"><value>Sampling</value></data>
+  <data name="SettingsEstimation" xml:space="preserve"><value>Estimation</value></data>
+  <data name="SettingsAppearance" xml:space="preserve"><value>Appearance</value></data>
+  <data name="SettingsAdvanced" xml:space="preserve"><value>Advanced</value></data>
+  <data name="SettingsLanguage" xml:space="preserve"><value>Language</value></data>
+  <data name="LanguageAuto" xml:space="preserve"><value>Automatic (Windows)</value></data>
+  <data name="LanguageChinese" xml:space="preserve"><value>简体中文</value></data>
+  <data name="LanguageEnglish" xml:space="preserve"><value>English</value></data>
+  <data name="SettingsTheme" xml:space="preserve"><value>Theme</value></data>
+  <data name="ThemeSystem" xml:space="preserve"><value>Use system setting</value></data>
+  <data name="ThemeLight" xml:space="preserve"><value>Light</value></data>
+  <data name="ThemeDark" xml:space="preserve"><value>Dark</value></data>
+  <data name="SettingsAutostart" xml:space="preserve"><value>Start after signing in to Windows</value></data>
+  <data name="SettingsCodexExecutable" xml:space="preserve"><value>Codex executable or stable locator</value></data>
+  <data name="SettingsAppServerArgs" xml:space="preserve"><value>App Server arguments</value></data>
+  <data name="SettingsSessionRoot" xml:space="preserve"><value>Sessions folder</value></data>
+  <data name="SettingsPollSeconds" xml:space="preserve"><value>Polling interval (seconds)</value></data>
+  <data name="SettingsLimitId" xml:space="preserve"><value>Preferred limit bucket ID (optional)</value></data>
+  <data name="SettingsMinimumWindow" xml:space="preserve"><value>Minimum auto-selected window (minutes)</value></data>
+  <data name="SettingsMinimumDelta" xml:space="preserve"><value>Minimum Δ% for a sample</value></data>
+  <data name="SettingsLookback" xml:space="preserve"><value>Initial context lookback (hours)</value></data>
+  <data name="SettingsHistoryDays" xml:space="preserve"><value>History retention (days)</value></data>
+  <data name="SettingsRegressionMode" xml:space="preserve"><value>Regression / aggregation</value></data>
+  <data name="SettingsLinearPoints" xml:space="preserve"><value>Maximum linear regression points</value></data>
+  <data name="SettingsSegmentHours" xml:space="preserve"><value>Segment window (hours)</value></data>
+  <data name="SettingsGaussianHours" xml:space="preserve"><value>Gaussian bandwidth (hours)</value></data>
+  <data name="SettingsMaximumSample" xml:space="preserve"><value>Maximum valid sample amount (USD)</value></data>
+  <data name="SettingsNote" xml:space="preserve"><value>{0} resolves the currently installed Codex Desktop package at every launch. Amounts use public Standard API prices × ChatGPT Fast credit multipliers (checked {1}). Auto-review assumption: {2}. Values are estimates, not subscription bills.</value></data>
+  <data name="SaveApply" xml:space="preserve"><value>Save and apply</value></data>
+  <data name="Revert" xml:space="preserve"><value>Revert unsaved changes</value></data>
+  <data name="RestoreDefaults" xml:space="preserve"><value>Restore defaults</value></data>
+  <data name="Browse" xml:space="preserve"><value>Browse…</value></data>
+  <data name="SavedAt" xml:space="preserve"><value>Saved and applied at {0:T}</value></data>
+  <data name="InvalidSettings" xml:space="preserve"><value>Invalid settings</value></data>
+  <data name="SelectExecutable" xml:space="preserve"><value>Select the Codex executable</value></data>
+  <data name="ExecutableFilter" xml:space="preserve"><value>Executable files (*.exe)|*.exe|All files (*.*)|*.*</value></data>
+  <data name="SelectSessionRoot" xml:space="preserve"><value>Select the Codex sessions folder</value></data>
+  <data name="ValidationCodexExecutable" xml:space="preserve"><value>Codex executable cannot be empty.</value></data>
+  <data name="ValidationAppServerArgs" xml:space="preserve"><value>App Server arguments cannot be empty.</value></data>
+  <data name="ValidationSessionRoot" xml:space="preserve"><value>Sessions folder cannot be empty.</value></data>
+  <data name="ValidationPoll" xml:space="preserve"><value>Polling interval cannot be less than 10 seconds.</value></data>
+  <data name="ValidationWindow" xml:space="preserve"><value>Minimum quota window must be greater than zero.</value></data>
+  <data name="ValidationDelta" xml:space="preserve"><value>Minimum percentage change must be between 0 and 100.</value></data>
+  <data name="ValidationLookback" xml:space="preserve"><value>Initial context lookback must be greater than zero.</value></data>
+  <data name="ValidationHistory" xml:space="preserve"><value>History retention must be greater than zero.</value></data>
+  <data name="ValidationLinear" xml:space="preserve"><value>Linear regression point count must be greater than zero.</value></data>
+  <data name="ValidationSegment" xml:space="preserve"><value>Segment window must be greater than zero.</value></data>
+  <data name="ValidationGaussian" xml:space="preserve"><value>Gaussian bandwidth must be greater than zero.</value></data>
+  <data name="ValidationMaximum" xml:space="preserve"><value>Maximum sample amount must be greater than zero.</value></data>
+  <data name="DetailsWaiting" xml:space="preserve"><value>Estimated weekly quota: waiting for two valid amount series</value></data>
+  <data name="DetailsEstimates" xml:space="preserve"><value>No long-context surcharge: ${0:N2}&#13;&#10;Official &gt;272K surcharge: ${1:N2}</value></data>
+  <data name="DetailsNoRateLimit" xml:space="preserve"><value>Quota window: not read yet; App Server: {0}</value></data>
+  <data name="DetailsUsage" xml:space="preserve"><value>Weekly window: {0:F2}% used / {1:F2}% remaining</value></data>
+  <data name="DetailsSamples" xml:space="preserve"><value>Current samples: {0} ({1} replayed); latest valid amount point: {2}&#13;&#10;Pending points: {3}; archived: {4}</value></data>
+  <data name="DetailsReset" xml:space="preserve"><value>Reset time: {0:G}</value></data>
+  <data name="DetailsResetUnknown" xml:space="preserve"><value>Reset time: unknown</value></data>
+  <data name="DetailsQuality" xml:space="preserve"><value>Unattributed changes: {0}; unpriced responses: {1}; replay checkpoints {2} / rejected {3} / unpriced {4} / unattributed {5} / awaiting logs {6} / malformed {7}</value></data>
+  <data name="DetailsIntegrity" xml:space="preserve"><value>Malformed rollout: {0}; malformed protocol: {1}; rotations: {2}; pruned cursors: {3}</value></data>
+  <data name="DiagnosticsTitle" xml:space="preserve"><value>Diagnostics &amp; About</value></data>
+  <data name="DiagnosticsDescription" xml:space="preserve"><value>Copy these non-sensitive facts when opening a GitHub issue. Conversation content and credentials are never displayed here.</value></data>
+  <data name="DiagnosticsVersion" xml:space="preserve"><value>Version</value></data>
+  <data name="DiagnosticsConnection" xml:space="preserve"><value>App Server connection</value></data>
+  <data name="DiagnosticsSamples" xml:space="preserve"><value>Current / archived samples</value></data>
+  <data name="DiagnosticsReplay" xml:space="preserve"><value>Historical replay</value></data>
+  <data name="DiagnosticsDataFolder" xml:space="preserve"><value>Data folder</value></data>
+  <data name="DiagnosticsSessionFolder" xml:space="preserve"><value>Sessions folder</value></data>
+  <data name="DiagnosticsPricing" xml:space="preserve"><value>Pricing version</value></data>
+  <data name="DiagnosticsCopy" xml:space="preserve"><value>Copy diagnostics</value></data>
+  <data name="DiagnosticsCopied" xml:space="preserve"><value>Diagnostics copied to the clipboard.</value></data>
+  <data name="TooltipFormat" xml:space="preserve"><value>Quota {0} | used {1} | {2} samples</value></data>
+  <data name="DashboardCurrentWindow" xml:space="preserve"><value>Current authoritative weekly window</value></data>
+  <data name="DashboardResetCaption" xml:space="preserve"><value>Shown in local time</value></data>
+  <data name="DashboardSamplesCaption" xml:space="preserve"><value>{0} archived · {1} pending checkpoints</value></data>
+  <data name="DashboardConnectionCaption" xml:space="preserve"><value>Last updated {0:T}</value></data>
+  <data name="DashboardEstimateCaption" xml:space="preserve"><value>{0} participating points</value></data>
+  <data name="DashboardStatus" xml:space="preserve"><value>Latest activity</value></data>
+  <data name="TimeRangeLabel" xml:space="preserve"><value>Time range</value></data>
+  <data name="ChartAxisTime" xml:space="preserve"><value>Sample time</value></data>
+  <data name="ChartNoVisibleSeries" xml:space="preserve"><value>No visible data for the selected series and time range.</value></data>
+  <data name="ChartHover" xml:space="preserve"><value>{0:g} · {1} · ${2:N2}</value></data>
+  <data name="QuickDetailsStatus" xml:space="preserve"><value>Runtime status: {0}</value></data>
+</root>
