@@ -3,7 +3,7 @@ using WeeklyQuotaMonitor.Core;
 namespace WeeklyQuotaMonitor;
 
 /// <summary>
-/// 管理托盘图标、悬停摘要、单双击区分、右键菜单及各个辅助窗口。
+/// 管理托盘图标、悬停摘要、双击入口、右键菜单及各个辅助窗口。
 /// </summary>
 public sealed class TrayApplicationContext : ApplicationContext
 {
@@ -12,7 +12,6 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ContextMenuStrip _menu;
     private readonly DetailForm _detailForm;
     private readonly ChartForm _chartForm;
-    private readonly System.Windows.Forms.Timer _singleClickTimer;
     private readonly ToolStripMenuItem _refreshItem = new();
     private readonly ToolStripMenuItem _detailsItem = new();
     private readonly ToolStripMenuItem _dashboardItem = new();
@@ -44,12 +43,6 @@ public sealed class TrayApplicationContext : ApplicationContext
             ContextMenuStrip = _menu
         };
 
-        _singleClickTimer = new System.Windows.Forms.Timer
-        {
-            Interval = SystemInformation.DoubleClickTime + 40
-        };
-        _singleClickTimer.Tick += SingleClickTimerTick;
-        _notifyIcon.MouseClick += NotifyIconMouseClick;
         _notifyIcon.MouseDoubleClick += NotifyIconMouseDoubleClick;
         _coordinator.ViewUpdated += UpdateView;
         ApplyLocalization();
@@ -60,6 +53,15 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// 启动后台协调器并完成第一次额度查询。
     /// </summary>
     public Task StartAsync() => _coordinator.StartAsync();
+
+    /// <summary>
+    /// 判断托盘鼠标动作是否应打开完整图表窗；仅左键双击或更多连续点击满足条件。
+    /// </summary>
+    /// <param name="button">触发托盘动作的鼠标按键。</param>
+    /// <param name="clickCount">Windows 报告的连续点击次数。</param>
+    /// <returns>应打开完整图表窗时返回 true；单击和非左键动作返回 false。</returns>
+    public static bool ShouldOpenChartFromTray(MouseButtons button, int clickCount) =>
+        button == MouseButtons.Left && clickCount >= 2;
 
     /// <summary>
     /// 在 WinForms 消息循环首次空闲时启动异步协议连接，避免启动阶段阻塞托盘消息泵。
@@ -147,42 +149,13 @@ public sealed class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>
-    /// 左键单击后延迟显示详情，以便双击事件有时间取消单击动作。
-    /// </summary>
-    private void NotifyIconMouseClick(object? sender, MouseEventArgs e)
-    {
-        if (e.Button == MouseButtons.Left)
-        {
-            _singleClickTimer.Stop();
-            _singleClickTimer.Start();
-        }
-    }
-
-    /// <summary>
-    /// 左键双击时取消延迟单击并打开完整图表窗。
+    /// 左键双击托盘图标时打开完整图表窗；单击不执行任何窗口动作。
     /// </summary>
     private void NotifyIconMouseDoubleClick(object? sender, MouseEventArgs e)
     {
-        if (e.Button == MouseButtons.Left)
+        if (ShouldOpenChartFromTray(e.Button, e.Clicks))
         {
-            _singleClickTimer.Stop();
             ShowChart();
-        }
-    }
-
-    /// <summary>
-    /// 延迟到期后确认这是单击并切换紧凑详情窗。
-    /// </summary>
-    private void SingleClickTimerTick(object? sender, EventArgs e)
-    {
-        _singleClickTimer.Stop();
-        if (_detailForm.Visible)
-        {
-            _detailForm.Hide();
-        }
-        else
-        {
-            ShowDetails();
         }
     }
 
@@ -289,7 +262,6 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         _notifyIcon.Visible = false;
         await _coordinator.DisposeAsync();
-        _singleClickTimer.Dispose();
         _detailForm.Dispose();
         _chartForm.Dispose();
         _menu.Dispose();

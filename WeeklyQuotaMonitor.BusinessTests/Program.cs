@@ -77,7 +77,8 @@ internal static class Program
             TestPartialLineWaitsForNewline,
             TestTruncatedFileRestartsCursor,
             TestDeletedFileCursorIsPruned,
-            TestDetailWindowCanReopenAfterUserClose,
+            TestTrayIconOpensOnlyOnLeftDoubleClick,
+            TestDetailWindowCanReopenFromMenuAfterUserClose,
             TestChartGridUsesLocalSampleTime,
             TestLegacyRegressionLimitMigrationRestoresCurve,
             TestDashboardTabsSeriesAndEstimate
@@ -296,9 +297,28 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证用户关闭详情窗后对象只会隐藏，托盘下一次单击仍可重新显示同一实例。
+    /// 验证托盘单击不打开窗口，只有左键双击才允许打开完整图表窗。
     /// </summary>
-    private static void TestDetailWindowCanReopenAfterUserClose()
+    private static void TestTrayIconOpensOnlyOnLeftDoubleClick()
+    {
+        Equal(
+            false,
+            TrayApplicationContext.ShouldOpenChartFromTray(MouseButtons.Left, 1),
+            "左键单击不得打开任何窗口");
+        Equal(
+            true,
+            TrayApplicationContext.ShouldOpenChartFromTray(MouseButtons.Left, 2),
+            "左键双击应打开完整图表窗");
+        Equal(
+            false,
+            TrayApplicationContext.ShouldOpenChartFromTray(MouseButtons.Right, 2),
+            "右键双击不得绕过右键菜单打开窗口");
+    }
+
+    /// <summary>
+    /// 验证用户关闭详情窗后对象只会隐藏，右键菜单下一次打开仍复用同一实例。
+    /// </summary>
+    private static void TestDetailWindowCanReopenFromMenuAfterUserClose()
     {
         using var form = new DetailForm();
         form.Show();

@@ -20,9 +20,9 @@ The utility installs to `%LOCALAPPDATA%\CodexWeeklyQuotaMonitor`, registers curr
 ## Usage
 
 - Hover the tray icon for estimates, usage, and sample count.
-- Single-click for quick details.
+- Single-click performs no window action, avoiding conflicts with double-click.
 - Double-click for history, regression curves, and per-sample token data.
-- Right-click to refresh, open dashboard/settings/diagnostics, or exit.
+- Right-click to refresh, open quick details/dashboard/settings/diagnostics, or exit.
 - Use **Settings → Appearance** for automatic Windows language, Simplified Chinese, English, and system/light/dark themes.
 
 The main window contains:
