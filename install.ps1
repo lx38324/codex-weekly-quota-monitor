@@ -62,10 +62,17 @@ if ($installedProcesses.Count -gt 0) {
 
 Move-Item -LiteralPath $stagedExecutable -Destination $targetExecutable -Force
 
-$readme = Join-Path $sourceDirectory 'README.md'
-if (Test-Path -LiteralPath $readme -PathType Leaf) {
-    Copy-Item -LiteralPath $readme -Destination (Join-Path $InstallDirectory 'README.md') -Force
+foreach ($documentationFile in @('README.md', 'README.en.md', 'LICENSE')) {
+    Copy-Item `
+        -LiteralPath (Join-Path $sourceDirectory $documentationFile) `
+        -Destination (Join-Path $InstallDirectory $documentationFile) `
+        -Force
 }
+Copy-Item `
+    -LiteralPath (Join-Path $sourceDirectory 'docs') `
+    -Destination (Join-Path $InstallDirectory 'docs') `
+    -Recurse `
+    -Force
 
 $settingsFile = Join-Path $InstallDirectory 'settings.json'
 if (Test-Path -LiteralPath $settingsFile -PathType Leaf) {

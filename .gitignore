@@ -14,6 +14,7 @@ test-output*/
 publish/
 release/
 dpi-layout-*.png
+ui-preview-*.png
 
 # 本机运行数据和临时文件
 settings.json

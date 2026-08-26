@@ -18,6 +18,7 @@
   <data name="TrayData" xml:space="preserve"><value>Open data folder</value></data>
   <data name="TrayExit" xml:space="preserve"><value>Exit</value></data>
   <data name="DashboardTitle" xml:space="preserve"><value>Weekly quota overview</value></data>
+  <data name="DashboardEyebrow" xml:space="preserve"><value>WEEKLY QUOTA  //  INTELLIGENCE</value></data>
   <data name="DashboardSubtitle" xml:space="preserve"><value>Subscription percentage from Codex App Server; amounts are public Standard API equivalents.</value></data>
   <data name="CardUsed" xml:space="preserve"><value>Used</value></data>
   <data name="CardRemaining" xml:space="preserve"><value>Remaining</value></data>
@@ -142,6 +143,7 @@
   <data name="DashboardResetCaption" xml:space="preserve"><value>Shown in local time</value></data>
   <data name="DashboardSamplesCaption" xml:space="preserve"><value>{0} archived · {1} pending checkpoints</value></data>
   <data name="DashboardConnectionCaption" xml:space="preserve"><value>Last updated {0:T}</value></data>
+  <data name="ConnectionBadgeFormat" xml:space="preserve"><value>{0} · Updated {1:T}</value></data>
   <data name="DashboardEstimateCaption" xml:space="preserve"><value>{0} participating points</value></data>
   <data name="DashboardStatus" xml:space="preserve"><value>Latest activity</value></data>
   <data name="TimeRangeLabel" xml:space="preserve"><value>Time range</value></data>

@@ -2,87 +2,56 @@
 
 [简体中文](README.md) | English
 
-An unofficial Windows tray utility that reads the signed-in Codex subscription usage percentage from the local Codex App Server, attributes local rollout token usage, and estimates a weekly quota in **Standard API-equivalent USD**.
+An unofficial Windows tray utility that reads the signed-in Codex weekly usage percentage, attributes local rollout tokens, and estimates a **Standard API-equivalent weekly quota in USD**.
 
-> The amount is a statistical estimate, not an OpenAI bill, subscription cash value, refund value, or official quota commitment. Usage from another device, cloud tasks, deleted logs, and unattributed activity can reduce accuracy.
+> The amount is a statistical estimate, not an OpenAI bill or official quota commitment. Other devices, cloud tasks, and missing logs affect accuracy.
 
-## Highlights
+## Quick install
 
-- Event-assisted monitoring with low-frequency polling as the authoritative safety net.
-- Combines local Codex Desktop, VS Code, and sidebar rollout files under the configured sessions root.
-- Separately prices input, cached input, cache writes, output, and reasoning output.
-- Applies observed ChatGPT Fast credit multipliers and keeps unknown service tiers unpriced.
-- Shows both the no-long-context-surcharge estimate and the official `>272K` API surcharge estimate.
-- Rebuilds the current weekly history after upgrades without discarding saved samples.
-- Four-page dashboard: overview, history and charts, settings, and diagnostics.
-- Interactive chart range filters, series visibility, hover values, and crosshairs.
-- Automatic Windows display-language detection plus persistent manual Chinese/English selection.
-- System, light, and dark themes; PerMonitorV2 high-DPI layouts.
-- Safe in-place upgrades that preserve settings, state, history, and Windows startup registration.
-
-## Requirements
-
-- Windows 10 or Windows 11, x64.
-- Codex Desktop, or another working `codex.exe` with the signed-in App Server session.
-- PowerShell 7 for the provided installer.
-
-The release executable is self-contained and does not require a separately installed .NET runtime.
-
-## Install or upgrade
-
-Download and extract the `CodexWeeklyQuotaMonitor-v1.3.0-win-x64.zip` release, then run:
+1. Download and extract the latest `win-x64.zip` from [Releases](https://github.com/lx38324/codex-weekly-quota-monitor/releases).
+2. Run in PowerShell 7:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-The installer stages the new executable, stops only the running process whose full path exactly matches the installation target, replaces it, restores the current-user startup entry, and starts the new version. Existing `settings.json`, `state.json`, and historical samples remain in place.
+The utility installs to `%LOCALAPPDATA%\CodexWeeklyQuotaMonitor`, registers current-user startup, and starts immediately. Run the same command to upgrade safely; settings, state, and samples are preserved.
 
-Default installation and data directory:
+## Usage
 
-```text
-%LOCALAPPDATA%\CodexWeeklyQuotaMonitor
-```
+- Hover the tray icon for estimates, usage, and sample count.
+- Single-click for quick details.
+- Double-click for history, regression curves, and per-sample token data.
+- Right-click to refresh, open dashboard/settings/diagnostics, or exit.
+- Use **Settings → Appearance** for automatic Windows language, Simplified Chinese, English, and system/light/dark themes.
 
-## Language and theme
+The main window contains:
 
-Open **Settings → Appearance**:
+- **Dashboard** — estimates, used/remaining percentage, reset time, samples, and connection state.
+- **History** — two pricing interpretations, time filters, curves, and token details.
+- **Settings** — polling, data sources, regression, language, theme, and startup.
+- **Diagnostics** — non-sensitive facts suitable for a GitHub issue.
 
-- **Automatic (Windows)** reads the current user's Windows UI language at startup. Chinese Windows uses Simplified Chinese; other languages use English.
-- **简体中文** and **English** persist as explicit overrides.
-- Switching back to **Automatic (Windows)** resumes Windows-language detection.
-- Theme choices are **Use system setting**, **Light**, and **Dark**.
+## Two estimate interpretations
 
-## How the estimate works
+- **No long-context surcharge** uses public Standard API regular prices.
+- **Official >272K surcharge** applies the published 2× input-class and 1.5× output rule when request input exceeds 272K.
 
-The monitor reads the authoritative weekly percentage through `account/rateLimits/read`. A percentage change triggers incremental attribution of local `token_count` rollout records. Each valid interval is converted to public Standard API-equivalent cost and extrapolated:
-
-```text
-estimated weekly quota USD = attributed interval cost USD × 100 / used-percent delta
-```
-
-The chart and regression engine expose both pricing interpretations. Unsupported models, unknown service tiers, malformed intervals, and activity without local logs fail closed and are shown as diagnostics instead of being guessed.
+Both apply recognized ChatGPT Fast credit multipliers. Unknown models, tiers, or unattributed intervals fail closed instead of being guessed.
 
 ## Privacy
 
-The application stores only settings, quota checkpoints, token aggregates, cursor metadata, estimates, and operational diagnostics. It does not store conversation text, tool-output text, App Server credentials, or raw App Server stderr.
+The utility stores settings, quota checkpoints, token aggregates, cursors, samples, and operational diagnostics. It does not store conversation text, tool-output text, credentials, or raw App Server stderr.
 
-## Build and test
+## Development
 
-Install the .NET 9 SDK, then run on Windows:
+Requires Windows, PowerShell 7, and the .NET 9 SDK:
 
 ```powershell
-dotnet build .\WeeklyQuotaMonitor.BusinessTests\WeeklyQuotaMonitor.BusinessTests.csproj -c Release
+dotnet build .\CodexWeeklyQuotaMonitor.sln -c Release
 dotnet .\WeeklyQuotaMonitor.BusinessTests\bin\Release\net9.0-windows\WeeklyQuotaMonitor.BusinessTests.dll
-pwsh -File .\build-release.ps1 -OutputDirectory .\publish
 ```
 
-The business suite covers pricing, Fast tiers, long-context rules, resets, historical replay, rollout robustness, localization, theme selection, four-page navigation, and 100%/125%/150%/200% layout scaling.
+See the [Chinese algorithm notes](docs/算法与数据口径.md), [installation guide](docs/安装升级与故障排查.md), [contribution guide](CONTRIBUTING.md), and [security policy](SECURITY.md).
 
-## Support and security
-
-- Use the Diagnostics page to copy non-sensitive facts for a bug report.
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
-- Report vulnerabilities according to [SECURITY.md](SECURITY.md), not through a public issue.
-
-Released under the [MIT License](LICENSE).
+MIT License.

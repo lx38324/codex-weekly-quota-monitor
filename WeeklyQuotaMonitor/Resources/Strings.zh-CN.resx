@@ -18,6 +18,7 @@
   <data name="TrayData" xml:space="preserve"><value>打开数据目录</value></data>
   <data name="TrayExit" xml:space="preserve"><value>退出</value></data>
   <data name="DashboardTitle" xml:space="preserve"><value>周额度总览</value></data>
+  <data name="DashboardEyebrow" xml:space="preserve"><value>WEEKLY QUOTA  //  INTELLIGENCE</value></data>
   <data name="DashboardSubtitle" xml:space="preserve"><value>订阅百分比来自 Codex App Server；金额是公开 Standard API 等价估计。</value></data>
   <data name="CardUsed" xml:space="preserve"><value>已用</value></data>
   <data name="CardRemaining" xml:space="preserve"><value>剩余</value></data>
@@ -142,6 +143,7 @@
   <data name="DashboardResetCaption" xml:space="preserve"><value>按本地时间显示</value></data>
   <data name="DashboardSamplesCaption" xml:space="preserve"><value>归档 {0} · 待归因检查点 {1}</value></data>
   <data name="DashboardConnectionCaption" xml:space="preserve"><value>最近更新 {0:T}</value></data>
+  <data name="ConnectionBadgeFormat" xml:space="preserve"><value>{0} · 更新于 {1:T}</value></data>
   <data name="DashboardEstimateCaption" xml:space="preserve"><value>{0} 个参与计算点</value></data>
   <data name="DashboardStatus" xml:space="preserve"><value>最近活动</value></data>
   <data name="TimeRangeLabel" xml:space="preserve"><value>时间范围</value></data>

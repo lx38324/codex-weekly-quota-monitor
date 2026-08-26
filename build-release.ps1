@@ -36,6 +36,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'install.ps1') -Destination (Join
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination (Join-Path $OutputDirectory 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.en.md') -Destination (Join-Path $OutputDirectory 'README.en.md') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination (Join-Path $OutputDirectory 'LICENSE') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs') -Destination (Join-Path $OutputDirectory 'docs') -Recurse -Force
 Set-Content `
     -LiteralPath (Join-Path $OutputDirectory 'codex-path.txt') `
     -Value 'codex-desktop://current' `

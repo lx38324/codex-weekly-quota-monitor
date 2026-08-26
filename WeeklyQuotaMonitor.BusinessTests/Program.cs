@@ -14,10 +14,21 @@ internal static class Program
     /// 顺序执行全部业务测试；任一断言失败时以异常和非零退出码暴露问题。
     /// </summary>
     [STAThread]
-    private static void Main()
+    private static void Main(string[] arguments)
     {
         UiText.SetLanguage(UiLanguage.ChineseSimplified);
         AppTheme.Set(UiTheme.Light);
+        if (arguments.Length > 0)
+        {
+            if (arguments.Length == 2 && string.Equals(arguments[0], "--capture-dashboard", StringComparison.Ordinal))
+            {
+                CaptureDashboard(arguments[1]);
+                return;
+            }
+
+            throw new InvalidDataException("仅支持 --capture-dashboard <png-path> 预览参数。");
+        }
+
         var tests = new Action[]
         {
             TestAutomaticWindowsLanguageSelection,
@@ -25,6 +36,7 @@ internal static class Program
             TestSettingsSchema2AddsAppearancePreferences,
             TestThemeSelectionRespectsManualOverride,
             TestDashboardLayoutAtSupportedDpiScales,
+            TestDashboardFitsReportedViewport,
             TestShortContextStandardPricing,
             TestLongContextStandardPricing,
             TestLongContextOfficialSurchargeCombinesWithFast,
@@ -130,9 +142,8 @@ internal static class Program
         {
             Equal(
                 true,
-                FindControls<TabControl>(englishForm).Single(control => control.TabPages.Count == 4).TabPages.Cast<TabPage>()
-                    .Any(page => page.Text == "Dashboard"),
-                "手动英文后主窗口应显示英文标签");
+                FindControls<SidebarNavigationButton>(englishForm).Any(button => button.Text == "Dashboard"),
+                "手动英文后侧栏应显示英文导航");
         }
 
         UiText.SetLanguage(UiLanguage.ChineseSimplified);
@@ -174,7 +185,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证主窗口在 100%、125%、150% 和 200% 缩放后四个一级页仍有正面积且内容停靠可达。
+    /// 验证主窗口在 100%、125%、150% 和 200% 缩放后，侧栏与四个业务页面仍可切换和访问。
     /// </summary>
     private static void TestDashboardLayoutAtSupportedDpiScales()
     {
@@ -183,17 +194,105 @@ internal static class Program
             using var form = new ChartForm(new AppSettings(), _ => { });
             form.Scale(new SizeF(scale, scale));
             form.PerformLayout();
-            var tabs = FindControls<TabControl>(form).Single(control => control.TabPages.Count == 4);
-            Equal(4, tabs.TabPages.Count, $"{scale:P0} 缩放下应保留四个一级页");
-            foreach (TabPage page in tabs.TabPages)
-            {
-                tabs.SelectedTab = page;
-                page.PerformLayout();
-                Equal(true, page.ClientSize.Width > 0 && page.ClientSize.Height > 0, $"{scale:P0} 缩放下页签应有可见区域");
-                Equal(true, page.Controls.Count == 1, $"{scale:P0} 缩放下每个一级页应有唯一自适应根控件");
-                Equal(DockStyle.Fill, page.Controls[0].Dock, $"{scale:P0} 缩放下页面根控件应填充可用区域");
-            }
+            Equal(1, FindControls<ApplicationSidebar>(form).Count(), $"{scale:P0} 缩放下应保留唯一科技侧栏");
+            Equal(4, FindControls<SidebarNavigationButton>(form).Count(), $"{scale:P0} 缩放下应保留四个业务入口");
+            form.ShowDashboardTab();
+            Equal(DashboardSection.Dashboard, form.SelectedSection, $"{scale:P0} 缩放下总览可达");
+            form.ShowChartTab();
+            Equal(DashboardSection.History, form.SelectedSection, $"{scale:P0} 缩放下历史可达");
+            form.ShowSettingsTab(new AppSettings());
+            Equal(DashboardSection.Settings, form.SelectedSection, $"{scale:P0} 缩放下设置可达");
+            form.ShowDiagnosticsTab();
+            Equal(DashboardSection.Diagnostics, form.SelectedSection, $"{scale:P0} 缩放下诊断可达");
+            form.Hide();
         }
+    }
+
+    /// <summary>
+    /// 验证用户截图对应的 1160×730 客户区内六张指标卡和连接徽标完整可见，且卡片文字保持透明背景和大号主值。
+    /// </summary>
+    private static void TestDashboardFitsReportedViewport()
+    {
+        using var form = new ChartForm(new AppSettings(), _ => { });
+        form.ClientSize = new Size(1160, 730);
+        form.UpdateView(CreateDashboardPreviewView(), new RegressionOptions { Mode = RegressionMode.GaussianAggregation });
+        form.ShowDashboardTab();
+        Application.DoEvents();
+
+        var cardGrid = FindControls<DashboardCardGrid>(form).Single();
+        var visibleGrid = cardGrid.RectangleToScreen(cardGrid.ClientRectangle);
+        var cards = FindControls<MetricCard>(cardGrid).ToArray();
+        Equal(6, cards.Length, "总览应只显示六张核心指标卡");
+        foreach (var card in cards)
+        {
+            var cardRectangle = card.RectangleToScreen(card.ClientRectangle);
+            Equal(true, visibleGrid.Contains(cardRectangle), $"指标卡 {card.AccessibleName} 不得被卡片工作区裁切");
+            Equal(
+                true,
+                FindControls<Label>(card).All(label => label.BackColor == Color.Transparent),
+                $"指标卡 {card.AccessibleName} 的文字不得出现白色贴片背景");
+            Equal(
+                true,
+                FindControls<Label>(card).Any(label => label.Font.Size >= 20F),
+                $"指标卡 {card.AccessibleName} 应保留醒目的大号主值");
+        }
+
+        var badge = FindControls<ConnectionBadge>(form).Single();
+        var visibleForm = form.RectangleToScreen(form.ClientRectangle);
+        Equal(true, visibleForm.Contains(badge.RectangleToScreen(badge.ClientRectangle)), "连接状态徽标不得被裁切");
+        form.Hide();
+    }
+
+    /// <summary>
+    /// 生成与用户截图数据规模相近的总览快照，供布局业务测试和人工视觉预览共用。
+    /// </summary>
+    /// <returns>包含双口径额度、3% 已用、24 个回归点和归档统计的展示快照。</returns>
+    private static MonitorViewSnapshot CreateDashboardPreviewView()
+    {
+        var timestamp = new DateTimeOffset(2026, 9, 1, 12, 34, 56, TimeSpan.FromHours(8));
+        var baseCurve = Enumerable.Range(0, 24)
+            .Select(index => new CurvePoint(timestamp.AddMinutes(index), 1800m + index * 3m))
+            .ToArray();
+        var officialCurve = Enumerable.Range(0, 24)
+            .Select(index => new CurvePoint(timestamp.AddMinutes(index), 2250m + index * 3m))
+            .ToArray();
+        return new MonitorViewSnapshot(
+            timestamp,
+            "preview",
+            new RateLimitSnapshot(timestamp, "codex", "Codex", 3m, 10080, timestamp.AddDays(1).AddHours(19).AddMinutes(47)),
+            1873.68m,
+            24,
+            0,
+            0,
+            [],
+            baseCurve)
+        {
+            OfficialLongContextEstimatedWeeklyQuotaUsd = 2317.14m,
+            OfficialLongContextRegressionCurve = officialCurve,
+            ArchivedSampleCount = 6,
+            AppServerConnected = true
+        };
+    }
+
+    /// <summary>
+    /// 在真实 WinForms 句柄和当前 Windows DPI 下渲染总览页 PNG，供发布前人工检查布局与视觉层级。
+    /// </summary>
+    /// <param name="outputPath">需要写入的 PNG 绝对或相对路径。</param>
+    private static void CaptureDashboard(string outputPath)
+    {
+        using var form = new ChartForm(new AppSettings(), _ => { });
+        form.ClientSize = new Size(1160, 730);
+        form.UpdateView(CreateDashboardPreviewView(), new RegressionOptions { Mode = RegressionMode.GaussianAggregation });
+        form.ShowDashboardTab();
+        Application.DoEvents();
+
+        using var bitmap = new Bitmap(form.Width, form.Height);
+        form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+        var absolutePath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+        bitmap.Save(absolutePath, System.Drawing.Imaging.ImageFormat.Png);
+        form.Hide();
+        Console.WriteLine($"总览预览已写入：{absolutePath}");
     }
 
     /// <summary>
@@ -393,7 +492,8 @@ internal static class Program
         Equal(DashboardSection.Dashboard, form.SelectedSection, "托盘总览入口应直达总览标签页");
         form.ShowDiagnosticsTab();
         Equal(DashboardSection.Diagnostics, form.SelectedSection, "托盘诊断入口应直达诊断标签页");
-        Equal(4, FindControls<TabControl>(form).Single(control => control.TabPages.Count == 4).TabPages.Count, "主窗口应有四个一级标签页");
+        Equal(1, FindControls<ApplicationSidebar>(form).Count(), "主窗口应有唯一科技侧栏");
+        Equal(4, FindControls<SidebarNavigationButton>(form).Count(), "科技侧栏应提供四个一级业务入口");
         form.Hide();
     }
 

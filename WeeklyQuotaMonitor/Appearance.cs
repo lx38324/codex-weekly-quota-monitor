@@ -101,11 +101,6 @@ public static class AppTheme
     }
 
     /// <summary>
-    /// 根据显式设置或 Windows AppsUseLightTheme 值生成调色板。
-    /// </summary>
-    /// <param name="theme">用户主题设置。</param>
-    /// <returns>浅色或深色调色板。</returns>
-    /// <summary>
     /// 读取 Windows 当前用户的应用明暗偏好；注册表默认值 1 表示浅色。
     /// </summary>
     /// <returns>Windows 配置为深色应用主题时返回 true。</returns>
@@ -125,11 +120,16 @@ public static class AppTheme
     /// <param name="palette">需要应用的调色板。</param>
     private static void ApplyControl(Control control, ThemePalette palette)
     {
-        control.Font = SystemFonts.MessageBoxFont;
         control.ForeColor = palette.Text;
-        control.BackColor = control is Form or TabPage or TableLayoutPanel or FlowLayoutPanel
-            ? palette.Window
-            : palette.Surface;
+        control.BackColor = control switch
+        {
+            Form or TabPage or UserControl => palette.Window,
+            ApplicationSidebar or SidebarNavigationButton => ApplicationSidebar.SidebarBackground,
+            MetricCard => palette.Surface,
+            Label or CheckBox or RadioButton or ConnectionBadge => Color.Transparent,
+            TableLayoutPanel or FlowLayoutPanel or Panel => control.Parent?.BackColor ?? palette.Window,
+            _ => palette.Surface
+        };
 
         if (control is TextBoxBase or ComboBox or NumericUpDown)
         {
@@ -154,6 +154,11 @@ public static class AppTheme
             grid.ColumnHeadersDefaultCellStyle.BackColor = palette.SurfaceAlternate;
             grid.ColumnHeadersDefaultCellStyle.ForeColor = palette.Text;
             grid.EnableHeadersVisualStyles = false;
+        }
+
+        if (control is ConnectionBadge badge)
+        {
+            badge.ApplyAppearance();
         }
 
         foreach (Control child in control.Controls)

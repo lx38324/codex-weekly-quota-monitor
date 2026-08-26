@@ -19,21 +19,23 @@ public enum DashboardSection
 public sealed class ChartForm : Form
 {
     private const string LiveSampleSource = "live";
-    private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
-    private readonly TabPage _dashboardTab = new();
-    private readonly TabPage _historyTab = new();
-    private readonly TabPage _settingsTab = new();
-    private readonly TabPage _diagnosticsTab = new();
-    private readonly MetricCard _baseEstimateCard = new();
-    private readonly MetricCard _officialEstimateCard = new();
-    private readonly MetricCard _usedCard = new();
-    private readonly MetricCard _remainingCard = new();
-    private readonly MetricCard _resetCard = new();
-    private readonly MetricCard _sampleCard = new();
-    private readonly MetricCard _connectionCard = new();
+    private readonly ApplicationSidebar _sidebar = new();
+    private readonly Panel _contentHost = new() { Dock = DockStyle.Fill };
+    private readonly Panel _dashboardPage = new() { Dock = DockStyle.Fill };
+    private readonly Panel _historyPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
+    private readonly Panel _settingsPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
+    private readonly Panel _diagnosticsPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
+    private readonly MetricCard _baseEstimateCard = new(MetricCardTone.Primary, MetricCardStyle.Hero);
+    private readonly MetricCard _officialEstimateCard = new(MetricCardTone.Purple, MetricCardStyle.Hero);
+    private readonly MetricCard _usedCard = new(MetricCardTone.Warning);
+    private readonly MetricCard _remainingCard = new(MetricCardTone.Positive);
+    private readonly MetricCard _resetCard = new(MetricCardTone.Purple);
+    private readonly MetricCard _sampleCard = new(MetricCardTone.Neutral);
+    private readonly DashboardCardGrid _dashboardGrid = new();
+    private readonly ConnectionBadge _connectionBadge = new();
+    private readonly Label _dashboardEyebrow = new();
     private readonly Label _dashboardTitle = new();
     private readonly Label _dashboardSubtitle = new();
-    private readonly Label _dashboardStatus = new();
     private readonly Label _regressionEstimate = new() { Name = "RegressionEstimateLabel" };
     private readonly Label _summary = new() { Name = "HistorySummaryLabel" };
     private readonly Label _timeRangeLabel = new();
@@ -49,6 +51,7 @@ public sealed class ChartForm : Form
     private readonly Dictionary<DataGridViewColumn, string> _gridColumnKeys = [];
     private MonitorViewSnapshot? _view;
     private AppSettings _settings;
+    private DashboardSection _selectedSection = DashboardSection.Dashboard;
 
     /// <summary>
     /// 构造四页主窗口，载入设置面板并绑定保存回调。
@@ -61,8 +64,8 @@ public sealed class ChartForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
-        MinimumSize = new Size(860, 600);
-        Size = new Size(1180, 780);
+        MinimumSize = new Size(980, 640);
+        Size = new Size(1180, 760);
         Font = SystemFonts.MessageBoxFont!;
 
         _settingsPanel = new SettingsPanel(settings);
@@ -71,29 +74,27 @@ public sealed class ChartForm : Form
         ConfigureSeriesOptions();
         ConfigureTimeRange();
 
-        _dashboardTab.Padding = new Padding(4);
-        _historyTab.Padding = new Padding(4);
-        _settingsTab.Padding = new Padding(4);
-        _diagnosticsTab.Padding = new Padding(4);
-        _dashboardTab.Controls.Add(BuildDashboardPage());
-        _historyTab.Controls.Add(BuildHistoryPage());
-        _settingsTab.Controls.Add(_settingsPanel);
-        _diagnosticsTab.Controls.Add(_diagnosticsPanel);
-        _tabs.TabPages.AddRange([_dashboardTab, _historyTab, _settingsTab, _diagnosticsTab]);
-        Controls.Add(_tabs);
+        _dashboardPage.Controls.Add(BuildDashboardPage());
+        _historyPage.Controls.Add(BuildHistoryPage());
+        _settingsPage.Controls.Add(_settingsPanel);
+        _diagnosticsPage.Controls.Add(_diagnosticsPanel);
+        _contentHost.Controls.AddRange([_dashboardPage, _historyPage, _settingsPage, _diagnosticsPage]);
+        _sidebar.SectionRequested += SelectSection;
+
+        var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
+        shell.ColumnStyles.Add(new(SizeType.Absolute, 220));
+        shell.ColumnStyles.Add(new(SizeType.Percent, 100));
+        shell.RowStyles.Add(new(SizeType.Percent, 100));
+        shell.Controls.Add(_sidebar, 0, 0);
+        shell.Controls.Add(_contentHost, 1, 0);
+        Controls.Add(shell);
 
         ApplyPreferences(settings);
+        SelectSection(DashboardSection.Dashboard);
         FormClosing += HideOnUserClose;
     }
 
-    public DashboardSection SelectedSection => _tabs.SelectedTab switch
-    {
-        var selected when selected == _dashboardTab => DashboardSection.Dashboard,
-        var selected when selected == _historyTab => DashboardSection.History,
-        var selected when selected == _settingsTab => DashboardSection.Settings,
-        var selected when selected == _diagnosticsTab => DashboardSection.Diagnostics,
-        _ => throw new InvalidOperationException("主窗口存在未注册的一级标签页。")
-    };
+    public DashboardSection SelectedSection => _selectedSection;
 
     /// <summary>
     /// 构造标题、说明、响应式指标卡和运行状态组成的总览页。
@@ -101,54 +102,58 @@ public sealed class ChartForm : Form
     /// <returns>可停靠到总览标签页的根控件。</returns>
     private Control BuildDashboardPage()
     {
+        _dashboardEyebrow.AutoSize = true;
+        _dashboardEyebrow.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 8F, FontStyle.Bold);
+        _dashboardEyebrow.ForeColor = Color.FromArgb(8, 145, 178);
+        _dashboardEyebrow.Margin = new Padding(0, 0, 0, 4);
         _dashboardTitle.AutoSize = true;
-        _dashboardTitle.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 20F, FontStyle.Bold);
+        _dashboardTitle.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 21F, FontStyle.Bold);
+        _dashboardTitle.Margin = new Padding(0, 0, 0, 6);
         _dashboardSubtitle.AutoSize = true;
-        _dashboardSubtitle.MaximumSize = new Size(940, 0);
-        _dashboardStatus.AutoSize = true;
-        _dashboardStatus.Padding = new Padding(8);
+        _dashboardSubtitle.MaximumSize = new Size(760, 0);
+        _dashboardSubtitle.ForeColor = AppTheme.Current.MutedText;
 
-        var cards = new TableLayoutPanel
+        var header = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 3,
+            AutoSize = true,
+            ColumnCount = 2,
             RowCount = 3,
-            Margin = new Padding(0, 16, 0, 16)
+            Margin = new Padding(8, 0, 8, 8)
         };
-        for (var column = 0; column < 3; column++)
-        {
-            cards.ColumnStyles.Add(new(SizeType.Percent, 33.333F));
-        }
+        header.ColumnStyles.Add(new(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new(SizeType.AutoSize));
+        header.RowStyles.Add(new(SizeType.AutoSize));
+        header.RowStyles.Add(new(SizeType.AutoSize));
+        header.RowStyles.Add(new(SizeType.AutoSize));
+        _connectionBadge.Margin = new Padding(20, 5, 0, 0);
+        header.Controls.Add(_dashboardEyebrow, 0, 0);
+        header.Controls.Add(_dashboardTitle, 0, 1);
+        header.Controls.Add(_dashboardSubtitle, 0, 2);
+        header.Controls.Add(_connectionBadge, 1, 1);
+        header.SetRowSpan(_connectionBadge, 2);
 
-        cards.RowStyles.Add(new(SizeType.Absolute, 142));
-        cards.RowStyles.Add(new(SizeType.Absolute, 142));
-        cards.RowStyles.Add(new(SizeType.Absolute, 142));
-        cards.Controls.Add(_baseEstimateCard, 0, 0);
-        cards.Controls.Add(_officialEstimateCard, 1, 0);
-        cards.Controls.Add(_usedCard, 2, 0);
-        cards.Controls.Add(_remainingCard, 0, 1);
-        cards.Controls.Add(_resetCard, 1, 1);
-        cards.Controls.Add(_sampleCard, 2, 1);
-        cards.Controls.Add(_connectionCard, 0, 2);
-        cards.SetColumnSpan(_connectionCard, 3);
+        _dashboardGrid.Margin = new Padding(0, 12, 0, 0);
+        _dashboardGrid.SetCards(
+            _baseEstimateCard,
+            _officialEstimateCard,
+            _usedCard,
+            _remainingCard,
+            _resetCard,
+            _sampleCard);
 
         var content = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            AutoScroll = true,
             ColumnCount = 1,
-            RowCount = 4,
-            Padding = new Padding(24)
+            RowCount = 2,
+            Padding = new Padding(26, 22, 26, 20)
         };
         content.ColumnStyles.Add(new(SizeType.Percent, 100));
         content.RowStyles.Add(new(SizeType.AutoSize));
-        content.RowStyles.Add(new(SizeType.AutoSize));
-        content.RowStyles.Add(new(SizeType.Absolute, 426));
-        content.RowStyles.Add(new(SizeType.AutoSize));
-        content.Controls.Add(_dashboardTitle);
-        content.Controls.Add(_dashboardSubtitle);
-        content.Controls.Add(cards);
-        content.Controls.Add(_dashboardStatus);
+        content.RowStyles.Add(new(SizeType.Percent, 100));
+        content.Controls.Add(header, 0, 0);
+        content.Controls.Add(_dashboardGrid, 0, 1);
 
         return content;
     }
@@ -262,6 +267,10 @@ public sealed class ChartForm : Form
         _settingsPanel.LoadSettings(settings);
         ApplyLocalization();
         AppTheme.Apply(this);
+        _sidebar.ApplyAppearance();
+        _dashboardEyebrow.ForeColor = Color.FromArgb(8, 145, 178);
+        _dashboardSubtitle.ForeColor = AppTheme.Current.MutedText;
+        _connectionBadge.ApplyAppearance();
         _chart.ApplyAppearance();
         RefreshAllPages();
     }
@@ -272,10 +281,8 @@ public sealed class ChartForm : Form
     private void ApplyLocalization()
     {
         Text = UiText.Get("ProductName");
-        _dashboardTab.Text = UiText.Get("TabDashboard");
-        _historyTab.Text = UiText.Get("TabHistory");
-        _settingsTab.Text = UiText.Get("TabSettings");
-        _diagnosticsTab.Text = UiText.Get("TabDiagnostics");
+        _sidebar.ApplyLocalization();
+        _dashboardEyebrow.Text = UiText.Get("DashboardEyebrow");
         _dashboardTitle.Text = UiText.Get("DashboardTitle");
         _dashboardSubtitle.Text = UiText.Get("DashboardSubtitle");
         _timeRangeLabel.Text = UiText.Get("TimeRangeLabel");
@@ -300,7 +307,7 @@ public sealed class ChartForm : Form
     public void ShowDashboardTab()
     {
         ShowWindow();
-        _tabs.SelectedTab = _dashboardTab;
+        SelectSection(DashboardSection.Dashboard);
     }
 
     /// <summary>
@@ -309,7 +316,7 @@ public sealed class ChartForm : Form
     public void ShowChartTab()
     {
         ShowWindow();
-        _tabs.SelectedTab = _historyTab;
+        SelectSection(DashboardSection.History);
     }
 
     /// <summary>
@@ -320,7 +327,7 @@ public sealed class ChartForm : Form
     {
         _settingsPanel.LoadSettings(settings);
         ShowWindow();
-        _tabs.SelectedTab = _settingsTab;
+        SelectSection(DashboardSection.Settings);
     }
 
     /// <summary>
@@ -329,7 +336,31 @@ public sealed class ChartForm : Form
     public void ShowDiagnosticsTab()
     {
         ShowWindow();
-        _tabs.SelectedTab = _diagnosticsTab;
+        SelectSection(DashboardSection.Diagnostics);
+    }
+
+    /// <summary>
+    /// 切换无页签内容工作区中唯一可见的业务页，并同步侧栏选中状态。
+    /// </summary>
+    /// <param name="section">需要显示的总览、历史、设置或诊断页面。</param>
+    private void SelectSection(DashboardSection section)
+    {
+        var target = section switch
+        {
+            DashboardSection.Dashboard => _dashboardPage,
+            DashboardSection.History => _historyPage,
+            DashboardSection.Settings => _settingsPage,
+            DashboardSection.Diagnostics => _diagnosticsPage,
+            _ => throw new InvalidOperationException($"不支持的主窗口页面：{section}。")
+        };
+        foreach (var page in new[] { _dashboardPage, _historyPage, _settingsPage, _diagnosticsPage })
+        {
+            page.Visible = ReferenceEquals(page, target);
+        }
+
+        target.BringToFront();
+        _selectedSection = section;
+        _sidebar.SetSelected(section);
     }
 
     /// <summary>
@@ -394,25 +425,21 @@ public sealed class ChartForm : Form
             UiText.Get("CardUsed"),
             PercentValue(used),
             UiText.Get("DashboardCurrentWindow"));
+        _usedCard.SetProgress(used);
         _remainingCard.SetContent(
             UiText.Get("CardRemaining"),
             PercentValue(remaining),
             UiText.Get("DashboardCurrentWindow"));
+        _remainingCard.SetProgress(remaining);
         _resetCard.SetContent(
             UiText.Get("CardReset"),
-            view.RateLimit?.ResetsAt.LocalDateTime.ToString("g", UiText.Culture) ?? UiText.Get("Unknown"),
+            view.RateLimit?.ResetsAt.LocalDateTime.ToString("MM/dd HH:mm", UiText.Culture) ?? UiText.Get("Unknown"),
             UiText.Get("DashboardResetCaption"));
         _sampleCard.SetContent(
             UiText.Get("CardSamples"),
             view.SampleCount.ToString("N0", UiText.Culture),
             UiText.Format("DashboardSamplesCaption", view.ArchivedSampleCount, pendingCount));
-        _connectionCard.SetContent(
-            UiText.Get("CardConnection"),
-            view.AppServerConnected ? UiText.Get("Connected") : UiText.Get("Disconnected"),
-            UiText.Format("DashboardConnectionCaption", view.UpdatedAt.LocalDateTime));
-        _dashboardStatus.Text = $"{UiText.Get("DashboardStatus")}: " +
-                                (view.AppServerConnected ? UiText.Get("Connected") : UiText.Get("Disconnected"));
-        _dashboardStatus.ForeColor = AppTheme.Current.MutedText;
+        _connectionBadge.SetState(view.AppServerConnected, view.UpdatedAt);
     }
 
     /// <summary>
