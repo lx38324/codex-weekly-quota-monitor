@@ -73,6 +73,9 @@ internal static class Program
             TestNewerConfigDoesNotRewriteOlderSessionTier,
             TestDelayedTierAppendTriggersRecoverableReplay,
             TestAuthoritativeCheckpointPreservesFirstObservation,
+            TestHistoricalFactsMergeActiveAndArchivedRoots,
+            TestHistoricalArchiveReplayBuildsMultipleWindows,
+            TestHistoricalArchiveReplayApplyPreservesUncoveredSamples,
             TestHistoricalReplayExcludesResponsesAfterFirstObservation,
             TestHistoricalReplayRejectsSlidingZeroAndBuildsSamples,
             TestHistoricalReplayApplyIsIdempotent,
@@ -1380,6 +1383,139 @@ internal static class Program
         Equal(false, HistoricalReplayCalculator.RecordAuthoritativeCheckpoint(state, repeated), "重复百分比不得移动检查点");
         Equal(1, state.AuthoritativeRateLimitCheckpoints.Count, "重复查询后应只有一个 18% 检查点");
         Equal(firstAt, state.AuthoritativeRateLimitCheckpoints[0].Timestamp, "应持久化首次观察时刻");
+    }
+
+    /// <summary>
+    /// 验证活动与归档目录可自动发现并在一次扫描中合并响应和额度点。
+    /// </summary>
+    private static void TestHistoricalFactsMergeActiveAndArchivedRoots()
+    {
+        var root = CreateTemporaryDirectory();
+        var sessions = Path.Combine(root, "sessions");
+        var archived = Path.Combine(root, "archived_sessions");
+        Directory.CreateDirectory(sessions);
+        Directory.CreateDirectory(archived);
+        var timestamp = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var resetAt = timestamp.AddDays(7);
+        File.WriteAllLines(Path.Combine(sessions, "rollout-active.jsonl"),
+        [
+            TurnContextLine(timestamp, "gpt-5.6-sol", "default"),
+            ResponseItemLine(timestamp.AddSeconds(1)),
+            TokenCountWithRateLimitsLine(timestamp.AddSeconds(2), 100_000, 80_000, 0, 5_000, 2_000, 1m, 10080, resetAt)
+        ]);
+        File.WriteAllLines(Path.Combine(archived, "rollout-archived.jsonl"),
+        [
+            TurnContextLine(timestamp.AddMinutes(1), "gpt-5.6-sol", "priority"),
+            ResponseItemLine(timestamp.AddMinutes(1).AddSeconds(1)),
+            TokenCountWithRateLimitsLine(
+                timestamp.AddMinutes(1).AddSeconds(2),
+                200_000,
+                150_000,
+                0,
+                8_000,
+                3_000,
+                2m,
+                10080,
+                resetAt)
+        ]);
+
+        var roots = RolloutLogReader.DiscoverHistoricalSessionRoots(sessions);
+        var facts = new RolloutLogReader().ReadHistoricalFacts(
+            roots,
+            timestamp.AddMinutes(-1),
+            timestamp.AddMinutes(3),
+            10080);
+
+        Equal(2, roots.Count, "应自动发现 sessions 与 archived_sessions 两个根目录");
+        Equal(2, facts.FilesScanned, "活动与归档各一个 rollout 应合并扫描");
+        Equal(2, facts.Responses.Count, "两个目录中的模型响应都应进入历史事实");
+        Equal(2, facts.RateLimitCheckpoints.Count, "两个目录中的百分比首次观察点都应保留");
+        Equal(true, facts.Responses.All(response => response.PricingSucceeded), "活动与归档响应都应按显式层级定价");
+        Directory.Delete(root, true);
+    }
+
+    /// <summary>
+    /// 验证宽时间事实可重建多个旧周，并排除重置后仍重复出现的陈旧额度快照。
+    /// </summary>
+    private static void TestHistoricalArchiveReplayBuildsMultipleWindows()
+    {
+        var historyStart = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var firstReset = historyStart.AddDays(7);
+        var secondStart = historyStart.AddDays(8);
+        var secondReset = secondStart.AddDays(7);
+        var currentWindowStart = historyStart.AddDays(18);
+        var responses = new[]
+        {
+            HistoricalPricedResponse(historyStart.AddHours(2), 1m),
+            HistoricalPricedResponse(secondStart.AddHours(2), 2m)
+        };
+        var checkpoints = new[]
+        {
+            new HistoricalRateLimitCheckpoint(historyStart.AddHours(1), 0m, 10080, firstReset),
+            new HistoricalRateLimitCheckpoint(historyStart.AddHours(3), 1m, 10080, firstReset.AddSeconds(20)),
+            new HistoricalRateLimitCheckpoint(firstReset.AddDays(1), 2m, 10080, firstReset),
+            new HistoricalRateLimitCheckpoint(secondStart.AddHours(1), 0m, 10080, secondReset),
+            new HistoricalRateLimitCheckpoint(secondStart.AddHours(3), 1m, 10080, secondReset.AddSeconds(-20))
+        };
+        var facts = new HistoricalRolloutFacts(
+            historyStart,
+            currentWindowStart,
+            responses,
+            checkpoints,
+            2,
+            0);
+
+        var replay = HistoricalArchiveReplayCalculator.Build("codex", 10080, facts, currentWindowStart);
+
+        Equal(2, replay.Windows.Count, "两个稳定重置簇应重建为两个旧周窗口");
+        Equal(2, replay.Windows.Sum(window => window.Samples.Count), "每个旧周的 0% 到 1% 区间都应形成样本");
+        Near(100m, replay.Windows[0].Samples[0].EstimatedWeeklyQuotaUsd, 0.000001m, "第一旧周反推额度");
+        Near(200m, replay.Windows[1].Samples[0].EstimatedWeeklyQuotaUsd, 0.000001m, "第二旧周反推额度");
+        Equal(
+            true,
+            replay.Windows.SelectMany(window => window.Samples).All(sample => sample.SampleSource == "historical-replay"),
+            "旧周样本必须保留历史重放来源标记");
+    }
+
+    /// <summary>
+    /// 验证旧周回填只替换成功覆盖的时间段，保留没有可靠旧窗口证据的实时样本。
+    /// </summary>
+    private static void TestHistoricalArchiveReplayApplyPreservesUncoveredSamples()
+    {
+        var historyStart = new DateTimeOffset(2026, 2, 1, 0, 0, 0, TimeSpan.Zero);
+        var resetAt = historyStart.AddDays(7);
+        var currentWindowStart = historyStart.AddDays(10);
+        var facts = new HistoricalRolloutFacts(
+            historyStart,
+            currentWindowStart,
+            [HistoricalPricedResponse(historyStart.AddHours(2), 3m)],
+            [
+                new HistoricalRateLimitCheckpoint(historyStart.AddHours(1), 0m, 10080, resetAt),
+                new HistoricalRateLimitCheckpoint(historyStart.AddHours(3), 1m, 10080, resetAt)
+            ],
+            1,
+            0);
+        var replay = HistoricalArchiveReplayCalculator.Build("codex", 10080, facts, currentWindowStart);
+        var uncovered = CurrentSample(historyStart.AddMinutes(30), 900m);
+        var covered = CurrentSample(historyStart.AddHours(3), 800m);
+        var state = new MonitorState { Samples = [uncovered, covered] };
+        var roots = new[] { @"C:\fixture\.codex\sessions", @"C:\fixture\.codex\archived_sessions" };
+
+        HistoricalArchiveReplayCalculator.ApplyToState(state, replay, 90, roots);
+
+        Equal(2, state.Samples.Count, "成功覆盖区间应替换旧样本，同时保留区间外样本");
+        Equal(true, state.Samples.Contains(uncovered), "首个可信百分比之前的实时样本不得被删除");
+        Equal(false, state.Samples.Contains(covered), "成功重建时间段内的旧实时样本应被替换");
+        Equal(1, state.HistoricalArchiveReplayWindowCount, "应持久化一个已重建旧窗口");
+        Equal(1, state.HistoricalArchiveReplaySampleCount, "应持久化一个旧窗口样本");
+        Equal(
+            false,
+            HistoricalArchiveReplayCalculator.IsReplayRequired(state, 90, roots),
+            "相同算法、价格、保留期和目录布局不应重复全盘扫描");
+        Equal(
+            true,
+            HistoricalArchiveReplayCalculator.IsReplayRequired(state, 120, roots),
+            "扩大历史保留期后应触发旧窗口重建");
     }
 
     /// <summary>

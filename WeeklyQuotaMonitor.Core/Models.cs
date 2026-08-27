@@ -137,6 +137,17 @@ public sealed class MonitorState
     public List<decimal> HistoricalReplayUnattributedUsedPercents { get; set; } = [];
     public Dictionary<string, long> HistoricalReplayUnresolvedFileLengths { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public int HistoricalReplayMalformedLines { get; set; }
+    public int HistoricalArchiveReplayVersion { get; set; }
+    public string HistoricalArchiveReplayPricingVersion { get; set; } = string.Empty;
+    public DateTimeOffset? HistoricalArchiveReplayCompletedAt { get; set; }
+    public int HistoricalArchiveReplayHistoryDays { get; set; }
+    public string HistoricalArchiveReplaySourceRoots { get; set; } = string.Empty;
+    public int HistoricalArchiveReplayWindowCount { get; set; }
+    public int HistoricalArchiveReplaySampleCount { get; set; }
+    public int HistoricalArchiveReplayFilesScanned { get; set; }
+    public int HistoricalArchiveReplayUnpricedResponses { get; set; }
+    public int HistoricalArchiveReplayUnattributedIntervals { get; set; }
+    public int HistoricalArchiveReplayMalformedLines { get; set; }
     public List<AuthoritativeRateLimitCheckpoint> AuthoritativeRateLimitCheckpoints { get; set; } = [];
     public bool RolloutFilesPrimed { get; set; }
     public Dictionary<string, FileCursorState> FileCursors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -260,6 +271,17 @@ public sealed record HistoricalReplayResult(
     int MalformedLineCount);
 
 /// <summary>
+/// 汇总图表保留期内多个旧额度窗口的重建结果和一次性扫描诊断。
+/// </summary>
+public sealed record HistoricalArchiveReplayResult(
+    DateTimeOffset HistoryStart,
+    DateTimeOffset HistoryEnd,
+    string LimitId,
+    IReadOnlyList<HistoricalReplayResult> Windows,
+    int FilesScanned,
+    int MalformedLineCount);
+
+/// <summary>
 /// 表示托盘、详情窗和图表窗共同消费的只读展示快照。
 /// </summary>
 public sealed record MonitorViewSnapshot(
@@ -289,4 +311,11 @@ public sealed record MonitorViewSnapshot(
     public int HistoricalReplayAwaitingLogIntervals { get; init; }
     public IReadOnlyList<decimal> HistoricalReplayUnattributedUsedPercents { get; init; } = [];
     public int HistoricalReplayMalformedLines { get; init; }
+    public DateTimeOffset? HistoricalArchiveReplayCompletedAt { get; init; }
+    public int HistoricalArchiveReplayWindowCount { get; init; }
+    public int HistoricalArchiveReplaySampleCount { get; init; }
+    public int HistoricalArchiveReplayFilesScanned { get; init; }
+    public int HistoricalArchiveReplayUnpricedResponses { get; init; }
+    public int HistoricalArchiveReplayUnattributedIntervals { get; init; }
+    public int HistoricalArchiveReplayMalformedLines { get; init; }
 }

@@ -68,9 +68,21 @@ foreach ($documentationFile in @('README.md', 'README.en.md', 'LICENSE')) {
         -Destination (Join-Path $InstallDirectory $documentationFile) `
         -Force
 }
+$resolvedInstallDirectory = [System.IO.Path]::GetFullPath($InstallDirectory)
+$installedDocumentation = Join-Path $resolvedInstallDirectory 'docs'
+if (Test-Path -LiteralPath $installedDocumentation) {
+    $resolvedInstalledDocumentation = (Resolve-Path -LiteralPath $installedDocumentation).Path
+    if (-not $resolvedInstalledDocumentation.StartsWith(
+            $resolvedInstallDirectory + [System.IO.Path]::DirectorySeparatorChar,
+            [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "安装文档目录越过安装目录：$resolvedInstalledDocumentation"
+    }
+
+    Remove-Item -LiteralPath $resolvedInstalledDocumentation -Recurse -Force
+}
 Copy-Item `
     -LiteralPath (Join-Path $sourceDirectory 'docs') `
-    -Destination (Join-Path $InstallDirectory 'docs') `
+    -Destination $installedDocumentation `
     -Recurse `
     -Force
 

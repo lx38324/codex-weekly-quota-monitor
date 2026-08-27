@@ -45,6 +45,8 @@ pwsh -ExecutionPolicy Bypass -File .\install.ps1
 
 程序保存设置、额度检查点、token 汇总、文件游标、样本和运行诊断；不保存对话正文、工具输出正文、认证凭据或 App Server stderr 原文。
 
+历史重建会在后台自动合并 `.codex\sessions` 与同级 `.codex\archived_sessions`，并在图表保留期内逐个额度窗口恢复具备完整百分比和 token 证据的旧样本。
+
 ## 更多说明
 
 - [算法与数据口径](docs/算法与数据口径.md)

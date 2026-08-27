@@ -16,6 +16,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     private FileSystemWatcher? _rolloutWatcher;
     private volatile bool _rolloutFilesChanged;
     private bool _polling;
+    private bool _notificationProcessing;
     private bool _disposed;
     private bool _restartConnectionRequested;
     private int _consecutiveConnectionFailures;
@@ -123,7 +124,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
 
             try
             {
-                HandleRateLimitContainer(result, "轮询");
+                await HandleRateLimitContainerAsync(result, "轮询");
             }
             catch (Exception exception) when (IsLocalDataFailure(exception))
             {
@@ -305,15 +306,25 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     /// 在 UI 线程处理额度通知，并把本地数据错误转换为可见状态。
     /// </summary>
     /// <param name="container">通知 params 的克隆 JSON。</param>
-    private void HandleNotificationOnUi(JsonElement container)
+    private async void HandleNotificationOnUi(JsonElement container)
     {
+        if (_polling || _notificationProcessing)
+        {
+            return;
+        }
+
+        _notificationProcessing = true;
         try
         {
-            HandleRateLimitContainer(container, "服务端通知");
+            await HandleRateLimitContainerAsync(container, "服务端通知");
         }
         catch (Exception exception) when (IsLocalDataFailure(exception))
         {
             PublishView($"服务端通知的本地处理失败：{exception.Message}；下一轮轮询将重试。");
+        }
+        finally
+        {
+            _notificationProcessing = false;
         }
     }
 
@@ -335,7 +346,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     /// </summary>
     /// <param name="container">account/rateLimits 的 result 或通知 params。</param>
     /// <param name="source">用于状态栏区分轮询和服务端通知的来源。</param>
-    private void HandleRateLimitContainer(JsonElement container, string source)
+    private async Task HandleRateLimitContainerAsync(JsonElement container, string source)
     {
         var snapshot = RateLimitParser.Parse(
             container,
@@ -355,7 +366,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             ? _rolloutReader.ScanNew(Settings.SessionRoot, _state, scanStart)
             : RolloutScanResult.Empty;
         var update = QuotaEstimator.Process(_state, snapshot, scan, Settings.MinimumPercentDelta);
-        var replayStatus = ReplayHistoryIfRequired(snapshot, authoritativeTimelineChanged);
+        var replayStatus = await ReplayHistoryIfRequiredAsync(snapshot, authoritativeTimelineChanged);
         _lastRateLimit = snapshot;
         PruneExpiredSamples();
         _storage.SaveState(_state);
@@ -367,29 +378,83 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     /// </summary>
     /// <param name="snapshot">当前 App Server 权威周额度快照。</param>
     /// <returns>本轮完成重放时返回可见状态前缀，否则返回空字符串。</returns>
-    private string ReplayHistoryIfRequired(
+    private async Task<string> ReplayHistoryIfRequiredAsync(
         RateLimitSnapshot snapshot,
         bool authoritativeTimelineChanged)
     {
+        var historicalRoots = RolloutLogReader.DiscoverHistoricalSessionRoots(Settings.SessionRoot);
+        var archiveReplayRequired = HistoricalArchiveReplayCalculator.IsReplayRequired(
+            _state,
+            Settings.ChartHistoryDays,
+            historicalRoots);
         var trackedUnresolvedFileChanged = RolloutLogReader.HaveTrackedFilesChanged(
             _state.HistoricalReplayUnresolvedFileLengths);
         var delayedLogMayHaveArrived =
             _rolloutFilesChanged && _state.HistoricalReplayAwaitingLogIntervals > 0;
         _rolloutFilesChanged = false;
-        if (!HistoricalReplayCalculator.IsReplayRequired(_state) &&
-            !authoritativeTimelineChanged &&
-            !trackedUnresolvedFileChanged &&
-            !delayedLogMayHaveArrived)
+        var currentReplayRequired = HistoricalReplayCalculator.IsReplayRequired(_state) ||
+                                    authoritativeTimelineChanged ||
+                                    trackedUnresolvedFileChanged ||
+                                    delayedLogMayHaveArrived;
+        if (!archiveReplayRequired && !currentReplayRequired)
         {
             return string.Empty;
         }
 
+        var statuses = new List<string>();
         var windowStart = QuotaEstimator.GetEffectiveWindowStart(snapshot);
-        var facts = _rolloutReader.ReadHistoricalFacts(
+        if (archiveReplayRequired)
+        {
+            var historyStart = DateTimeOffset.Now.AddDays(-Settings.ChartHistoryDays);
+            HistoricalArchiveReplayResult archiveReplay;
+            if (historyStart < windowStart)
+            {
+                archiveReplay = await Task.Run(() =>
+                {
+                    var facts = new RolloutLogReader().ReadHistoricalFacts(
+                        historicalRoots,
+                        historyStart,
+                        windowStart,
+                        snapshot.WindowDurationMinutes);
+                    return HistoricalArchiveReplayCalculator.Build(
+                        snapshot.LimitId,
+                        snapshot.WindowDurationMinutes,
+                        facts,
+                        windowStart);
+                });
+            }
+            else
+            {
+                archiveReplay = new(
+                    historyStart,
+                    windowStart,
+                    snapshot.LimitId,
+                    [],
+                    0,
+                    0);
+            }
+
+            HistoricalArchiveReplayCalculator.ApplyToState(
+                _state,
+                archiveReplay,
+                Settings.ChartHistoryDays,
+                historicalRoots);
+            statuses.Add(
+                $"旧窗口重建 {archiveReplay.Windows.Count} 周、" +
+                $"{archiveReplay.Windows.Sum(window => window.Samples.Count)} 个样本，" +
+                $"扫描 {archiveReplay.FilesScanned} 个活动/归档日志；");
+        }
+
+        if (!currentReplayRequired)
+        {
+            return string.Concat(statuses);
+        }
+
+        var facts = await Task.Run(() => new RolloutLogReader().ReadHistoricalFacts(
             Settings.SessionRoot,
             windowStart,
             snapshot.SampledAt,
-            snapshot.WindowDurationMinutes);
+            snapshot.WindowDurationMinutes));
         var replay = HistoricalReplayCalculator.Build(
             snapshot,
             facts,
@@ -397,9 +462,11 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         HistoricalReplayCalculator.ApplyToState(_state, replay);
         _state.HistoricalReplayUnresolvedFileLengths =
             RolloutLogReader.CaptureFileLengths(replay.UnresolvedSourceFiles);
-        return $"历史重放生成 {replay.Samples.Count} 个样本，接受 {replay.AcceptedCheckpointCount} 个额度点，" +
-               $"排除或去重 {replay.RejectedCheckpointCount} 个候选，未归因区间 {replay.UnattributedIntervalCount}，" +
-               $"待日志补齐 {replay.AwaitingLogIntervalCount}；";
+        statuses.Add(
+            $"当前周重放生成 {replay.Samples.Count} 个样本，接受 {replay.AcceptedCheckpointCount} 个额度点，" +
+            $"排除或去重 {replay.RejectedCheckpointCount} 个候选，未归因区间 {replay.UnattributedIntervalCount}，" +
+            $"待日志补齐 {replay.AwaitingLogIntervalCount}；");
+        return string.Concat(statuses);
     }
 
     /// <summary>
@@ -498,7 +565,14 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             HistoricalReplayAwaitingLogIntervals = _state.HistoricalReplayAwaitingLogIntervals,
             HistoricalReplayUnattributedUsedPercents =
                 _state.HistoricalReplayUnattributedUsedPercents.ToArray(),
-            HistoricalReplayMalformedLines = _state.HistoricalReplayMalformedLines
+            HistoricalReplayMalformedLines = _state.HistoricalReplayMalformedLines,
+            HistoricalArchiveReplayCompletedAt = _state.HistoricalArchiveReplayCompletedAt,
+            HistoricalArchiveReplayWindowCount = _state.HistoricalArchiveReplayWindowCount,
+            HistoricalArchiveReplaySampleCount = _state.HistoricalArchiveReplaySampleCount,
+            HistoricalArchiveReplayFilesScanned = _state.HistoricalArchiveReplayFilesScanned,
+            HistoricalArchiveReplayUnpricedResponses = _state.HistoricalArchiveReplayUnpricedResponses,
+            HistoricalArchiveReplayUnattributedIntervals = _state.HistoricalArchiveReplayUnattributedIntervals,
+            HistoricalArchiveReplayMalformedLines = _state.HistoricalArchiveReplayMalformedLines
         };
     }
 

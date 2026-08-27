@@ -36,7 +36,19 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'install.ps1') -Destination (Join
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination (Join-Path $OutputDirectory 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.en.md') -Destination (Join-Path $OutputDirectory 'README.en.md') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination (Join-Path $OutputDirectory 'LICENSE') -Force
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs') -Destination (Join-Path $OutputDirectory 'docs') -Recurse -Force
+$resolvedOutput = (Resolve-Path -LiteralPath $OutputDirectory).Path
+$documentationOutput = Join-Path $resolvedOutput 'docs'
+if (Test-Path -LiteralPath $documentationOutput) {
+    $resolvedDocumentationOutput = (Resolve-Path -LiteralPath $documentationOutput).Path
+    if (-not $resolvedDocumentationOutput.StartsWith(
+            $resolvedOutput + [System.IO.Path]::DirectorySeparatorChar,
+            [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "文档输出目录越过发布目录：$resolvedDocumentationOutput"
+    }
+
+    Remove-Item -LiteralPath $resolvedDocumentationOutput -Recurse -Force
+}
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs') -Destination $documentationOutput -Recurse -Force
 Set-Content `
     -LiteralPath (Join-Path $OutputDirectory 'codex-path.txt') `
     -Value 'codex-desktop://current' `

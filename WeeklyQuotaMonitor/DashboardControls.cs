@@ -839,7 +839,11 @@ public sealed class DiagnosticsPanel : UserControl
         AddFact(
             "DiagnosticsReplay",
             $"accepted={_view.HistoricalReplayAcceptedCheckpoints}, rejected={_view.HistoricalReplayRejectedCheckpoints}, " +
-            $"unattributed={_view.HistoricalReplayUnattributedIntervals}");
+            $"unattributed={_view.HistoricalReplayUnattributedIntervals}; " +
+            $"archive_windows={_view.HistoricalArchiveReplayWindowCount}, " +
+            $"archive_samples={_view.HistoricalArchiveReplaySampleCount}, " +
+            $"archive_files={_view.HistoricalArchiveReplayFilesScanned}, " +
+            $"archive_unattributed={_view.HistoricalArchiveReplayUnattributedIntervals}");
         AddFact("DiagnosticsDataFolder", AppPaths.DataDirectory);
         AddFact("DiagnosticsSessionFolder", _settings.SessionRoot);
         AddFact("DiagnosticsPricing", PublicApiPricing.PricingVersion);

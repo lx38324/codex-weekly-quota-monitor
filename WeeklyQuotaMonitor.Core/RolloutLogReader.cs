@@ -13,6 +13,7 @@ public sealed partial class RolloutLogReader
     public const int CurrentServiceTierTrackingVersion = 2;
     public const int CurrentResponseAssociationTrackingVersion = 1;
     private const int SessionHeaderPrefixBytes = 4096;
+    private const int StreamingReadBufferBytes = 64 * 1024;
 
     /// <summary>
     /// 首次启动时把已有日志设为基线；仅扫描近期文件内容以保留正在进行响应的模型上下文。
@@ -39,16 +40,13 @@ public sealed partial class RolloutLogReader
             ApplyConfiguredServiceTier(path, cursor, configuredTier);
             if (info.LastWriteTimeUtc >= contextCutoff)
             {
-                var chunk = ReadCompleteLines(path, 0);
-                foreach (var line in chunk.Lines)
+                cursor.Offset = ProcessCompleteLines(path, 0, line =>
                 {
                     if (!ProcessLine(line, cursor, null, null))
                     {
                         malformedLines++;
                     }
-                }
-
-                cursor.Offset = chunk.NextOffset;
+                });
             }
             else
             {
@@ -119,16 +117,13 @@ public sealed partial class RolloutLogReader
                 continue;
             }
 
-            var chunk = ReadCompleteLines(path, cursor.Offset);
-            foreach (var line in chunk.Lines)
+            cursor.Offset = ProcessCompleteLines(path, cursor.Offset, line =>
             {
                 if (!ProcessLine(line, cursor, accumulator, includeSince))
                 {
                     accumulator.AddMalformedLine();
                 }
-            }
-
-            cursor.Offset = chunk.NextOffset;
+            });
         }
 
         return accumulator.ToResult();
@@ -147,7 +142,27 @@ public sealed partial class RolloutLogReader
         DateTimeOffset windowStart,
         DateTimeOffset windowEnd,
         int windowDurationMinutes)
+        => ReadHistoricalFacts([sessionRoot], windowStart, windowEnd, windowDurationMinutes);
+
+    /// <summary>
+    /// 从多个 Codex 会话根目录一次性重读历史上下文，并按 rollout 文件名去重活动与归档副本。
+    /// </summary>
+    /// <param name="sessionRoots">需要合并扫描的 sessions 或 archived_sessions 根目录。</param>
+    /// <param name="windowStart">历史重放最早时间。</param>
+    /// <param name="windowEnd">历史重放最晚时间。</param>
+    /// <param name="windowDurationMinutes">需要提取的额度窗口分钟数。</param>
+    /// <returns>不修改增量游标的合并历史事实和完整性诊断。</returns>
+    public HistoricalRolloutFacts ReadHistoricalFacts(
+        IReadOnlyCollection<string> sessionRoots,
+        DateTimeOffset windowStart,
+        DateTimeOffset windowEnd,
+        int windowDurationMinutes)
     {
+        if (sessionRoots.Count == 0)
+        {
+            throw new ArgumentException("历史重放至少需要一个 Codex 会话根目录。", nameof(sessionRoots));
+        }
+
         if (windowEnd < windowStart)
         {
             throw new ArgumentOutOfRangeException(nameof(windowEnd), "历史重放结束时间不能早于窗口起点。");
@@ -162,19 +177,26 @@ public sealed partial class RolloutLogReader
             windowStart,
             windowEnd,
             windowDurationMinutes);
-        var configuredTier = ReadConfiguredServiceTierEvidence(sessionRoot);
-        var paths = EnumerateRolloutFiles(sessionRoot)
+        var normalizedRoots = sessionRoots
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var configuredTier = ReadConfiguredServiceTierEvidence(normalizedRoots[0]);
+        var paths = normalizedRoots
+            .SelectMany(EnumerateRolloutFiles)
             .Where(path => new FileInfo(path).LastWriteTimeUtc >= windowStart.UtcDateTime)
+            .GroupBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.MaxBy(path => new FileInfo(path).Length)!)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         foreach (var path in paths)
         {
-            var chunk = ReadCompleteLines(path, 0);
             var tierProbe = new ScanAccumulator(null);
             var tierProbeCursor = new FileCursorState();
-            foreach (var line in chunk.Lines)
+            ProcessCompleteLines(path, 0, line =>
             {
                 ProcessLine(line, tierProbeCursor, tierProbe, null);
-            }
+            });
 
             var explicitTier = tierProbe.GetConsistentExplicitServiceTier();
             var cursor = new FileCursorState { CurrentServiceTier = explicitTier ?? "unknown" };
@@ -183,16 +205,37 @@ public sealed partial class RolloutLogReader
                 ApplyConfiguredServiceTier(path, cursor, configuredTier);
             }
             accumulator.SetHistoricalSourceFile(path);
-            foreach (var line in chunk.Lines)
+            ProcessCompleteLines(path, 0, line =>
             {
                 if (!ProcessLine(line, cursor, accumulator, windowStart))
                 {
                     accumulator.AddMalformedLine();
                 }
-            }
+            });
         }
 
         return accumulator.ToHistoricalFacts(windowStart, windowEnd, paths.Length);
+    }
+
+    /// <summary>
+    /// 根据配置的 sessions 路径自动发现同一 Codex 数据目录下可用的活动与归档会话根目录。
+    /// </summary>
+    /// <param name="sessionRoot">设置中配置的活动 sessions 根目录。</param>
+    /// <returns>始终包含活动目录，并在存在时追加同级 archived_sessions 目录。</returns>
+    public static IReadOnlyList<string> DiscoverHistoricalSessionRoots(string sessionRoot)
+    {
+        var absoluteSessionRoot = Path.GetFullPath(sessionRoot);
+        var codexRoot = Path.GetDirectoryName(absoluteSessionRoot)
+            ?? throw new InvalidDataException($"无法从 sessions 路径解析 Codex 数据目录：{absoluteSessionRoot}");
+        var roots = new List<string> { absoluteSessionRoot };
+        var archivedRoot = Path.Combine(codexRoot, "archived_sessions");
+        if (Directory.Exists(archivedRoot) &&
+            !string.Equals(archivedRoot, absoluteSessionRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            roots.Add(archivedRoot);
+        }
+
+        return roots;
     }
 
     /// <summary>
@@ -317,41 +360,75 @@ public sealed partial class RolloutLogReader
     }
 
     /// <summary>
-    /// 从指定字节位置读取到当前文件末尾，但只返回以换行结束的完整 UTF-8 JSONL 行。
+    /// 从指定字节位置流式读取完整 UTF-8 JSONL 行，避免为大型 rollout 同时分配整文件字节、字符串和行数组。
     /// </summary>
     /// <param name="path">需要读取的 rollout 文件。</param>
     /// <param name="offset">已持久化的起始字节位置。</param>
-    /// <returns>完整行集合和下次读取应使用的字节位置。</returns>
-    private static FileChunk ReadCompleteLines(string path, long offset)
+    /// <param name="processLine">逐行处理以换行结束的非空完整记录。</param>
+    /// <returns>最后一条完整行之后的字节位置；末尾半行留待下次重新读取。</returns>
+    private static long ProcessCompleteLines(string path, long offset, Action<string> processLine)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        var available = stream.Length - offset;
-        if (available <= 0)
+        if (stream.Length <= offset)
         {
-            return new([], offset);
-        }
-
-        if (available > int.MaxValue)
-        {
-            throw new InvalidDataException($"单次新增日志超过 2 GiB：{path}");
+            return offset;
         }
 
         stream.Position = offset;
-        var bytes = new byte[(int)available];
-        stream.ReadExactly(bytes);
-        var lastNewline = Array.LastIndexOf(bytes, (byte)'\n');
-        if (lastNewline < 0)
+        var buffer = new byte[StreamingReadBufferBytes];
+        using var lineBuffer = new MemoryStream();
+        var committedOffset = offset;
+        while (true)
         {
-            return new([], offset);
+            var bufferStart = stream.Position;
+            var bytesRead = stream.Read(buffer, 0, buffer.Length);
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            var segmentStart = 0;
+            for (var index = 0; index < bytesRead; index++)
+            {
+                if (buffer[index] != (byte)'\n')
+                {
+                    continue;
+                }
+
+                lineBuffer.Write(buffer, segmentStart, index - segmentStart);
+                EmitCompleteLine(lineBuffer, processLine);
+                lineBuffer.SetLength(0);
+                committedOffset = bufferStart + index + 1;
+                segmentStart = index + 1;
+            }
+
+            if (segmentStart < bytesRead)
+            {
+                lineBuffer.Write(buffer, segmentStart, bytesRead - segmentStart);
+            }
         }
 
-        var text = Encoding.UTF8.GetString(bytes, 0, lastNewline + 1);
-        var lines = text
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.TrimEnd('\r'))
-            .Where(line => line.Length > 0)
-            .ToArray();
-        return new(lines, offset + lastNewline + 1);
+        return committedOffset;
+    }
+
+    /// <summary>
+    /// 解码一条已确认换行结束的 UTF-8 记录，移除可选回车并跳过空行。
+    /// </summary>
+    /// <param name="lineBuffer">不含换行符的单行 UTF-8 字节。</param>
+    /// <param name="processLine">接收解码后完整 JSONL 行的处理器。</param>
+    private static void EmitCompleteLine(MemoryStream lineBuffer, Action<string> processLine)
+    {
+        var length = checked((int)lineBuffer.Length);
+        var bytes = lineBuffer.GetBuffer();
+        if (length > 0 && bytes[length - 1] == (byte)'\r')
+        {
+            length--;
+        }
+
+        if (length > 0)
+        {
+            processLine(Encoding.UTF8.GetString(bytes, 0, length));
+        }
     }
 
     /// <summary>
@@ -934,11 +1011,6 @@ public sealed partial class RolloutLogReader
     private static partial Regex SessionTimestampPattern();
 
     /// <summary>
-    /// 保存一次文件读取形成的完整行和下一字节位置。
-    /// </summary>
-    private sealed record FileChunk(IReadOnlyList<string> Lines, long NextOffset);
-
-    /// <summary>
     /// 保存 config.toml 明确层级及配置文件最后写入时刻，用于与会话创建时间建立证据顺序。
     /// </summary>
     private sealed record ConfiguredServiceTierEvidence(string ServiceTier, DateTimeOffset WrittenAt);
@@ -965,7 +1037,7 @@ public sealed partial class RolloutLogReader
         private readonly HashSet<string> _creditMultipliers = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _explicitServiceTiers = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<HistoricalResponseFact> _historicalResponses = [];
-        private readonly List<HistoricalRateLimitCheckpoint> _historicalCheckpoints = [];
+        private readonly Dictionary<HistoricalCheckpointKey, HistoricalRateLimitCheckpoint> _historicalCheckpoints = [];
         private string _historicalSourceFile = string.Empty;
 
         /// <summary>
@@ -1102,11 +1174,17 @@ public sealed partial class RolloutLogReader
                 return false;
             }
 
-            _historicalCheckpoints.Add(new(
+            var checkpoint = new HistoricalRateLimitCheckpoint(
                 timestamp,
                 usedPercent,
                 duration,
-                DateTimeOffset.FromUnixTimeSeconds(resetsAtUnix)));
+                DateTimeOffset.FromUnixTimeSeconds(resetsAtUnix));
+            var key = new HistoricalCheckpointKey(usedPercent, duration, resetsAtUnix);
+            if (!_historicalCheckpoints.TryGetValue(key, out var existing) || timestamp < existing.Timestamp)
+            {
+                _historicalCheckpoints[key] = checkpoint;
+            }
+
             return true;
         }
 
@@ -1218,8 +1296,16 @@ public sealed partial class RolloutLogReader
                 windowStart,
                 windowEnd,
                 _historicalResponses.OrderBy(response => response.Timestamp).ToArray(),
-                _historicalCheckpoints.OrderBy(checkpoint => checkpoint.Timestamp).ToArray(),
+                _historicalCheckpoints.Values.OrderBy(checkpoint => checkpoint.Timestamp).ToArray(),
                 filesScanned,
                 _malformedLineCount);
     }
+
+    /// <summary>
+    /// 标识同一额度百分比和重置承诺的重复 rollout 快照，只保留其首次观察时刻。
+    /// </summary>
+    private readonly record struct HistoricalCheckpointKey(
+        decimal UsedPercent,
+        int WindowDurationMinutes,
+        long ResetsAtUnix);
 }
