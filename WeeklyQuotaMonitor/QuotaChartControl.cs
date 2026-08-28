@@ -1,4 +1,5 @@
 using WeeklyQuotaMonitor.Core;
+using System.Drawing.Drawing2D;
 
 namespace WeeklyQuotaMonitor;
 
@@ -87,7 +88,13 @@ public sealed class QuotaChartControl : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var background = new LinearGradientBrush(
+            ClientRectangle,
+            AppTheme.Current.Surface,
+            AppTheme.Current.SurfaceAlternate,
+            LinearGradientMode.Vertical);
+        e.Graphics.FillRectangle(background, ClientRectangle);
 
         var scale = DeviceDpi / 96F;
         var plot = new RectangleF(
@@ -95,7 +102,7 @@ public sealed class QuotaChartControl : Control
             30 * scale,
             Math.Max(10 * scale, Width - 104 * scale),
             Math.Max(10 * scale, Height - 94 * scale));
-        using var axisPen = new Pen(AppTheme.Current.MutedText, 1.2F * scale);
+        using var axisPen = new Pen(AppTheme.Current.Border, 1F * scale);
         e.Graphics.DrawLine(axisPen, plot.Left, plot.Bottom, plot.Right, plot.Bottom);
         e.Graphics.DrawLine(axisPen, plot.Left, plot.Top, plot.Left, plot.Bottom);
 
@@ -165,8 +172,8 @@ public sealed class QuotaChartControl : Control
                 minY,
                 maxY,
                 scale,
-                Color.FromArgb(170, 244, 137, 40),
-                Color.FromArgb(232, 111, 33));
+                Color.FromArgb(120, 14, 165, 233),
+                Color.FromArgb(14, 165, 233));
         }
 
         if (_seriesVisibility.ShowOfficialSamples)
@@ -195,7 +202,9 @@ public sealed class QuotaChartControl : Control
                 minY,
                 maxY,
                 scale,
-                Color.FromArgb(24, 119, 196));
+                Color.FromArgb(15, 135, 210),
+                fillArea: true,
+                dashed: false);
         }
 
         if (_seriesVisibility.ShowOfficialRegression)
@@ -209,7 +218,9 @@ public sealed class QuotaChartControl : Control
                 minY,
                 maxY,
                 scale,
-                Color.FromArgb(26, 145, 91));
+                Color.FromArgb(139, 92, 246),
+                fillArea: false,
+                dashed: true);
         }
 
         BuildHitTargets(plot, baseRaw, officialLongRaw, minX, maxX, minY, maxY);
@@ -237,7 +248,7 @@ public sealed class QuotaChartControl : Control
             var y = plot.Bottom - plot.Height * ratio;
             graphics.DrawLine(gridPen, plot.Left, y, plot.Right, y);
             var value = minY + (maxY - minY) * (decimal)ratio;
-            var label = value.ToString("C2", UiText.Culture);
+            var label = $"${value.ToString("N0", UiText.Culture)}";
             var labelSize = graphics.MeasureString(label, Font);
             graphics.DrawString(label, Font, labelBrush, plot.Left - labelSize.Width - 8 * scale, y - labelSize.Height / 2);
 
@@ -246,7 +257,11 @@ public sealed class QuotaChartControl : Control
             var timestamp = minX + TimeSpan.FromTicks((long)((maxX - minX).Ticks * ratio));
             var timeLabel = timestamp.LocalDateTime.ToString("MM-dd HH:mm", UiText.Culture);
             var timeSize = graphics.MeasureString(timeLabel, Font);
-            graphics.DrawString(timeLabel, Font, labelBrush, x - timeSize.Width / 2, plot.Bottom + 8 * scale);
+            var timeX = Math.Clamp(
+                x - timeSize.Width / 2,
+                plot.Left,
+                Math.Max(plot.Left, Width - timeSize.Width - 8 * scale));
+            graphics.DrawString(timeLabel, Font, labelBrush, timeX, plot.Bottom + 8 * scale);
         }
 
         graphics.DrawString(UiText.Get("ChartAxisTime"), Font, labelBrush, plot.Right - 70 * scale, plot.Bottom + 34 * scale);
@@ -269,7 +284,7 @@ public sealed class QuotaChartControl : Control
         Color pointColor)
     {
         var screenPoints = points.Select(point => Map(point, plot, minX, maxX, minY, maxY)).ToArray();
-        using var linePen = new Pen(lineColor, 1.4F * scale);
+        using var linePen = new Pen(lineColor, 1.2F * scale);
         using var pointBrush = new SolidBrush(pointColor);
         if (screenPoints.Length > 1)
         {
@@ -288,7 +303,7 @@ public sealed class QuotaChartControl : Control
     }
 
     /// <summary>
-    /// 使用指定颜色绘制一个口径的回归或聚合曲线。
+    /// 使用指定颜色绘制一个口径的回归或聚合曲线，并可为主曲线增加轻量面积光晕。
     /// </summary>
     private static void DrawRegressionSeries(
         Graphics graphics,
@@ -299,7 +314,9 @@ public sealed class QuotaChartControl : Control
         decimal minY,
         decimal maxY,
         float scale,
-        Color color)
+        Color color,
+        bool fillArea,
+        bool dashed)
     {
         if (points.Count == 0)
         {
@@ -307,8 +324,25 @@ public sealed class QuotaChartControl : Control
         }
 
         var screenPoints = points.Select(point => Map(point, plot, minX, maxX, minY, maxY)).ToArray();
-        using var regressionPen = new Pen(color, 3F * scale);
-        regressionPen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
+        if (fillArea && screenPoints.Length > 1)
+        {
+            var areaPoints = screenPoints
+                .Concat([new PointF(screenPoints[^1].X, plot.Bottom), new PointF(screenPoints[0].X, plot.Bottom)])
+                .ToArray();
+            using var areaPath = new GraphicsPath();
+            areaPath.AddPolygon(areaPoints);
+            using var areaBrush = new LinearGradientBrush(
+                plot,
+                Color.FromArgb(42, color),
+                Color.FromArgb(3, color),
+                LinearGradientMode.Vertical);
+            graphics.FillPath(areaBrush, areaPath);
+        }
+
+        using var regressionPen = new Pen(color, 2.6F * scale)
+        {
+            DashStyle = dashed ? DashStyle.Dash : DashStyle.Solid
+        };
         if (screenPoints.Length == 1)
         {
             graphics.DrawEllipse(
@@ -331,13 +365,13 @@ public sealed class QuotaChartControl : Control
     {
         var entries = new List<(string Label, Color Color, bool IsRegression)>();
         if (_seriesVisibility.ShowBaseSamples)
-            entries.Add((UiText.Get("SeriesBaseSamples"), Color.FromArgb(232, 111, 33), false));
+            entries.Add((UiText.Get("SeriesBaseSamples"), Color.FromArgb(14, 165, 233), false));
         if (_seriesVisibility.ShowBaseRegression)
-            entries.Add((UiText.Get("SeriesBaseRegression"), Color.FromArgb(24, 119, 196), true));
+            entries.Add((UiText.Get("SeriesBaseRegression"), Color.FromArgb(15, 135, 210), true));
         if (_seriesVisibility.ShowOfficialSamples)
             entries.Add((UiText.Get("SeriesOfficialSamples"), Color.FromArgb(121, 67, 171), false));
         if (_seriesVisibility.ShowOfficialRegression)
-            entries.Add((UiText.Get("SeriesOfficialRegression"), Color.FromArgb(26, 145, 91), true));
+            entries.Add((UiText.Get("SeriesOfficialRegression"), Color.FromArgb(139, 92, 246), true));
 
         using var textBrush = new SolidBrush(AppTheme.Current.Text);
         var startX = Math.Max(plot.Left + 8 * scale, plot.Right - 440 * scale);

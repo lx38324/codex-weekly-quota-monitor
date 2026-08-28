@@ -5,21 +5,21 @@
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
   <data name="ProductName" xml:space="preserve"><value>Codex Weekly Quota Monitor</value></data>
-  <data name="TabDashboard" xml:space="preserve"><value>Dashboard</value></data>
+  <data name="TabDashboard" xml:space="preserve"><value>Overview &amp; trends</value></data>
   <data name="TabHistory" xml:space="preserve"><value>History</value></data>
   <data name="TabSettings" xml:space="preserve"><value>Settings</value></data>
   <data name="TabDiagnostics" xml:space="preserve"><value>Diagnostics</value></data>
   <data name="TrayStarting" xml:space="preserve"><value>Codex quota: starting</value></data>
   <data name="TrayRefresh" xml:space="preserve"><value>Refresh quota now</value></data>
   <data name="TrayDetails" xml:space="preserve"><value>Show quick details</value></data>
-  <data name="TrayDashboard" xml:space="preserve"><value>Open dashboard</value></data>
+  <data name="TrayDashboard" xml:space="preserve"><value>Open overview &amp; trends</value></data>
   <data name="TrayHistory" xml:space="preserve"><value>Open history</value></data>
   <data name="TraySettings" xml:space="preserve"><value>Open settings…</value></data>
   <data name="TrayData" xml:space="preserve"><value>Open data folder</value></data>
   <data name="TrayExit" xml:space="preserve"><value>Exit</value></data>
-  <data name="DashboardTitle" xml:space="preserve"><value>Weekly quota overview</value></data>
-  <data name="DashboardEyebrow" xml:space="preserve"><value>WEEKLY QUOTA  //  INTELLIGENCE</value></data>
-  <data name="DashboardSubtitle" xml:space="preserve"><value>Subscription percentage from Codex App Server; amounts are public Standard API equivalents.</value></data>
+  <data name="DashboardTitle" xml:space="preserve"><value>Weekly quota pulse</value></data>
+  <data name="DashboardEyebrow" xml:space="preserve"><value>WEEKLY QUOTA  //  LIVE SIGNAL</value></data>
+  <data name="DashboardSubtitle" xml:space="preserve"><value>Authoritative percentage, Standard API equivalent quota, and history in one workspace.</value></data>
   <data name="CardUsed" xml:space="preserve"><value>Used</value></data>
   <data name="CardRemaining" xml:space="preserve"><value>Remaining</value></data>
   <data name="CardReset" xml:space="preserve"><value>Resets</value></data>
@@ -29,13 +29,16 @@
   <data name="Disconnected" xml:space="preserve"><value>Disconnected</value></data>
   <data name="Unknown" xml:space="preserve"><value>Unknown</value></data>
   <data name="None" xml:space="preserve"><value>None</value></data>
-  <data name="EstimateBase" xml:space="preserve"><value>No long-context surcharge</value></data>
+  <data name="EstimateBase" xml:space="preserve"><value>Standard API equivalent weekly quota</value></data>
   <data name="EstimateOfficial" xml:space="preserve"><value>Official &gt;272K surcharge</value></data>
   <data name="WaitingSamples" xml:space="preserve"><value>Waiting for valid samples</value></data>
   <data name="EstimateValue" xml:space="preserve"><value>About ${0:N2}</value></data>
   <data name="EstimateWithPoints" xml:space="preserve"><value>About ${0:N2} · {1} points</value></data>
   <data name="CurrentEstimateFormat" xml:space="preserve"><value>Current {0}: base {1}; official &gt;272K {2}</value></data>
+  <data name="CurrentEstimateBaseFormat" xml:space="preserve"><value>{0} · {1}</value></data>
+  <data name="CurrentEstimateDualFormat" xml:space="preserve"><value>{0} · Standard {1} · &gt;272K {2}</value></data>
   <data name="SummaryFormat" xml:space="preserve"><value>Authoritative used {0} · latest valid amount point {1} · pending points {2} · samples {3} · archived {4} · sample cap ${5:N2}{6}</value></data>
+  <data name="TrendSummaryFormat" xml:space="preserve"><value>Authoritative used {0} · latest valid {1} · {2} samples ({3} archived) · {4} pending{5}</value></data>
   <data name="FilterHint" xml:space="preserve"><value>; some or all samples are filtered by the cap—raise it in Settings</value></data>
   <data name="RegressionLinear" xml:space="preserve"><value>linear regression</value></data>
   <data name="RegressionSegmented" xml:space="preserve"><value>segmented regression</value></data>
@@ -96,6 +99,8 @@
   <data name="SettingsSegmentHours" xml:space="preserve"><value>Segment window (hours)</value></data>
   <data name="SettingsGaussianHours" xml:space="preserve"><value>Gaussian bandwidth (hours)</value></data>
   <data name="SettingsMaximumSample" xml:space="preserve"><value>Maximum valid sample amount (USD)</value></data>
+  <data name="SettingsOfficialLongContext" xml:space="preserve"><value>Additional amount basis</value></data>
+  <data name="SettingsOfficialLongContextOption" xml:space="preserve"><value>Enable official &gt;272K long-context comparison</value></data>
   <data name="SettingsNote" xml:space="preserve"><value>{0} resolves the currently installed Codex Desktop package at every launch. Amounts use public Standard API prices × ChatGPT Fast credit multipliers (checked {1}). Auto-review assumption: {2}. Values are estimates, not subscription bills.</value></data>
   <data name="SaveApply" xml:space="preserve"><value>Save and apply</value></data>
   <data name="Revert" xml:space="preserve"><value>Revert unsaved changes</value></data>
@@ -118,7 +123,8 @@
   <data name="ValidationSegment" xml:space="preserve"><value>Segment window must be greater than zero.</value></data>
   <data name="ValidationGaussian" xml:space="preserve"><value>Gaussian bandwidth must be greater than zero.</value></data>
   <data name="ValidationMaximum" xml:space="preserve"><value>Maximum sample amount must be greater than zero.</value></data>
-  <data name="DetailsWaiting" xml:space="preserve"><value>Estimated weekly quota: waiting for two valid amount series</value></data>
+  <data name="DetailsWaiting" xml:space="preserve"><value>Estimated weekly quota: waiting for valid samples</value></data>
+  <data name="DetailsEstimateBase" xml:space="preserve"><value>Standard API equivalent weekly quota: ${0:N2}</value></data>
   <data name="DetailsEstimates" xml:space="preserve"><value>No long-context surcharge: ${0:N2}&#13;&#10;Official &gt;272K surcharge: ${1:N2}</value></data>
   <data name="DetailsNoRateLimit" xml:space="preserve"><value>Quota window: not read yet; App Server: {0}</value></data>
   <data name="DetailsUsage" xml:space="preserve"><value>Weekly window: {0:F2}% used / {1:F2}% remaining</value></data>
@@ -141,9 +147,9 @@
   <data name="TooltipFormat" xml:space="preserve"><value>Quota {0} | used {1} | {2} samples</value></data>
   <data name="DashboardCurrentWindow" xml:space="preserve"><value>Current authoritative weekly window</value></data>
   <data name="DashboardResetCaption" xml:space="preserve"><value>Shown in local time</value></data>
-  <data name="DashboardSamplesCaption" xml:space="preserve"><value>{0} archived · {1} pending checkpoints</value></data>
+  <data name="DashboardSamplesCaption" xml:space="preserve"><value>Archived {0} · pending {1}</value></data>
   <data name="DashboardConnectionCaption" xml:space="preserve"><value>Last updated {0:T}</value></data>
-  <data name="ConnectionBadgeFormat" xml:space="preserve"><value>{0} · Updated {1:T}</value></data>
+  <data name="ConnectionBadgeFormat" xml:space="preserve"><value>{0} · {1:HH:mm:ss}</value></data>
   <data name="DashboardEstimateCaption" xml:space="preserve"><value>{0} participating points</value></data>
   <data name="DashboardStatus" xml:space="preserve"><value>Latest activity</value></data>
   <data name="TimeRangeLabel" xml:space="preserve"><value>Time range</value></data>

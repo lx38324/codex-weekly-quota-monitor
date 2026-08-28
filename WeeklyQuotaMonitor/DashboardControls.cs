@@ -48,9 +48,9 @@ public sealed class MetricCard : Panel
         Tone = tone;
         Style = style;
         BorderStyle = BorderStyle.None;
-        Padding = new Padding(18, 14, 16, 12);
-        Margin = new Padding(8);
-        MinimumSize = new Size(210, LogicalHeight);
+        Padding = new Padding(15, 11, 13, 10);
+        Margin = new Padding(5);
+        MinimumSize = new Size(135, LogicalHeight);
         Height = LogicalHeight;
         Dock = DockStyle.None;
         DoubleBuffered = true;
@@ -64,15 +64,15 @@ public sealed class MetricCard : Panel
         _layout.RowStyles.Add(new(SizeType.AutoSize));
         _layout.RowStyles.Add(new(SizeType.Percent, 100));
         _title.AutoSize = true;
-        _title.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 9.5F, FontStyle.Bold);
-        _title.Margin = new Padding(0, 0, 0, 5);
+        _title.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 8.5F, FontStyle.Bold);
+        _title.Margin = new Padding(0, 0, 0, 3);
         _title.BackColor = Color.Transparent;
         _value.AutoSize = true;
         _value.Font = new Font(
             SystemFonts.MessageBoxFont!.FontFamily,
-            style == MetricCardStyle.Hero ? 25F : 21F,
+            style == MetricCardStyle.Hero ? 20F : 16.5F,
             FontStyle.Bold);
-        _value.Margin = new Padding(0, 0, 0, 7);
+        _value.Margin = new Padding(0, 0, 0, 4);
         _value.BackColor = Color.Transparent;
         _caption.AutoSize = true;
         _caption.Margin = new Padding(0);
@@ -85,7 +85,22 @@ public sealed class MetricCard : Panel
 
     public MetricCardTone Tone { get; }
     public MetricCardStyle Style { get; }
-    public int LogicalHeight => Style == MetricCardStyle.Hero ? 136 : 116;
+    public int LogicalHeight => Style == MetricCardStyle.Hero ? 100 : 92;
+
+    /// <summary>
+    /// 根据当前 DPI 下三行文字的真实首选高度计算卡片高度，同时保留设计基线的最小高度。
+    /// </summary>
+    /// <param name="proposedSize">父级计划分配的卡片宽度。</param>
+    /// <returns>不会裁切标题、主值和说明文字的卡片尺寸。</returns>
+    public override Size GetPreferredSize(Size proposedSize)
+    {
+        var availableWidth = Math.Max(1, proposedSize.Width - Padding.Horizontal);
+        var content = _layout.GetPreferredSize(new Size(availableWidth, 0));
+        var scaledBaseline = (int)Math.Ceiling(LogicalHeight * DeviceDpi / 96F);
+        return new(
+            Math.Max(MinimumSize.Width, proposedSize.Width),
+            Math.Max(scaledBaseline, content.Height + Padding.Vertical + Math.Max(4, DeviceDpi / 24)));
+    }
 
     /// <summary>
     /// 更新指标卡片的可见内容和屏幕阅读器描述。
@@ -99,16 +114,10 @@ public sealed class MetricCard : Panel
         _value.Text = value;
         _caption.Text = caption;
         AccessibleName = $"{title}: {value}. {caption}";
-        _title.ForeColor = Style == MetricCardStyle.Hero
-            ? Color.FromArgb(174, 191, 211)
-            : AppTheme.Current.MutedText;
+        _title.ForeColor = AppTheme.Current.MutedText;
         _value.ForeColor = ResolveAccent();
-        _caption.ForeColor = Style == MetricCardStyle.Hero
-            ? Color.FromArgb(137, 155, 177)
-            : AppTheme.Current.MutedText;
-        BackColor = Style == MetricCardStyle.Hero
-            ? Color.FromArgb(13, 23, 40)
-            : AppTheme.Current.Surface;
+        _caption.ForeColor = AppTheme.Current.MutedText;
+        BackColor = AppTheme.Current.Surface;
         _layout.BackColor = BackColor;
         Invalidate();
     }
@@ -129,34 +138,22 @@ public sealed class MetricCard : Panel
     }
 
     /// <summary>
-    /// 绘制轻量边框和左侧强调条，避免系统 FixedSingle 边框的旧式观感。
+    /// 绘制圆角轻量边框和顶部状态光带，形成轻盈而清晰的科技卡片层级。
     /// </summary>
     /// <param name="e">当前绘制上下文。</param>
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var accentColor = ResolveAccent();
         var borderColor = Style == MetricCardStyle.Hero
-            ? Color.FromArgb(105, accentColor)
+            ? Color.FromArgb(AppTheme.Current.IsDark ? 130 : 88, accentColor)
             : AppTheme.Current.Border;
         using var border = new Pen(borderColor, Math.Max(1F, DeviceDpi / 96F));
         using var accent = new SolidBrush(ResolveAccent());
-        var borderRectangle = ClientRectangle;
-        borderRectangle.Width -= 1;
-        borderRectangle.Height -= 1;
-        e.Graphics.DrawRectangle(border, borderRectangle);
-        e.Graphics.FillRectangle(accent, 0, 0, Math.Max(4, DeviceDpi / 24), Height);
-        if (Style == MetricCardStyle.Hero)
-        {
-            using var circuitPen = new Pen(Color.FromArgb(65, accentColor), Math.Max(1F, DeviceDpi / 96F));
-            var step = Math.Max(9, DeviceDpi / 10);
-            for (var index = 0; index < 3; index++)
-            {
-                var x = Width - 22 - index * step;
-                e.Graphics.DrawLine(circuitPen, x, 12, x + 9, 12);
-                e.Graphics.DrawLine(circuitPen, x + 9, 12, x + 9, 19 + index * 3);
-            }
-        }
+        using var path = CreateRoundedRectangle(ClientRectangle, Math.Max(9, DeviceDpi / 10));
+        e.Graphics.DrawPath(border, path);
+        e.Graphics.FillRectangle(accent, 14, 0, Math.Max(32, Width / 5), Math.Max(3, DeviceDpi / 32));
 
         if (_progressPercent is decimal progress)
         {
@@ -186,23 +183,74 @@ public sealed class MetricCard : Panel
         MetricCardTone.Neutral => AppTheme.Current.Text,
         _ => throw new InvalidOperationException($"不支持的指标卡颜色语义：{Tone}。")
     };
+
+    /// <summary>
+    /// 创建贴合指标卡客户区的圆角矩形路径。
+    /// </summary>
+    /// <param name="rectangle">需要描边的客户区。</param>
+    /// <param name="radius">圆角半径。</param>
+    /// <returns>由调用方释放的圆角路径。</returns>
+    private static GraphicsPath CreateRoundedRectangle(Rectangle rectangle, int radius)
+    {
+        var diameter = radius * 2;
+        var bounds = Rectangle.Inflate(rectangle, -1, -1);
+        var path = new GraphicsPath();
+        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
 }
 
 /// <summary>
-/// 按实际客户区宽度和显示器 DPI 将指标卡排列为三列、两列或单列，并在空间不足时提供滚动。
+/// 在主工作台最小宽度约束内将五张核心指标卡稳定排列为等宽单行，避免滚动条引发布局抖动。
 /// </summary>
 public sealed class DashboardCardGrid : Panel
 {
     private readonly List<MetricCard> _cards = [];
 
     /// <summary>
-    /// 构造填充父级且支持纵向滚动的响应式卡片容器。
+    /// 构造填充父级的双缓冲指标带。
     /// </summary>
     public DashboardCardGrid()
     {
         Dock = DockStyle.Fill;
-        AutoScroll = true;
+        AutoScroll = false;
+        AutoSize = true;
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
         DoubleBuffered = true;
+    }
+
+    /// <summary>
+    /// 以当前 DPI 下最高卡片的首选高度决定整个指标带高度，供父级 AutoSize 行布局使用。
+    /// </summary>
+    /// <param name="proposedSize">父级可提供的指标带宽度。</param>
+    /// <returns>五张卡单行排列且文字完整可见所需的尺寸。</returns>
+    public override Size GetPreferredSize(Size proposedSize)
+    {
+        if (_cards.Count == 0)
+        {
+            return base.GetPreferredSize(proposedSize);
+        }
+
+        var scale = DeviceDpi / 96F;
+        var outerPadding = (int)Math.Round(4 * scale);
+        var gap = (int)Math.Round(10 * scale);
+        var usableWidth = Math.Max(_cards.Count, proposedSize.Width - outerPadding * 2);
+        var availableCardWidth = Math.Max(_cards.Count, usableWidth - gap * (_cards.Count - 1));
+        var heroWeight = _cards[0].Style == MetricCardStyle.Hero ? 1.55 : 1.0;
+        var unitWidth = availableCardWidth / (heroWeight + _cards.Count - 1);
+        var maximumHeight = 0;
+        for (var index = 0; index < _cards.Count; index++)
+        {
+            var weight = index == 0 ? heroWeight : 1.0;
+            var width = Math.Max(1, (int)Math.Round(unitWidth * weight));
+            maximumHeight = Math.Max(maximumHeight, _cards[index].GetPreferredSize(new Size(width, 0)).Height);
+        }
+
+        return new(Math.Max(1, proposedSize.Width), maximumHeight + outerPadding * 2);
     }
 
     /// <summary>
@@ -244,7 +292,7 @@ public sealed class DashboardCardGrid : Panel
     }
 
     /// <summary>
-    /// 根据当前可用宽度选择最多三列并设置卡片边界；计算过程不依赖 AutoSize。
+    /// 根据当前可用宽度把全部卡片稳定排成一行；窗口最小宽度保证每张卡仍可读。
     /// </summary>
     private void LayoutCards()
     {
@@ -254,54 +302,35 @@ public sealed class DashboardCardGrid : Panel
         }
 
         var scale = DeviceDpi / 96F;
-        var outerPadding = (int)Math.Round(8 * scale);
-        var gap = (int)Math.Round(12 * scale);
-        var minimumCardWidth = (int)Math.Round(220 * scale);
-        var usableWidth = Math.Max(minimumCardWidth, ClientSize.Width - outerPadding * 2);
-        var columns = Math.Clamp((usableWidth + gap) / (minimumCardWidth + gap), 1, 3);
-        var cardWidth = Math.Max(
-            minimumCardWidth,
-            (usableWidth - gap * (columns - 1)) / columns);
-        var rows = (int)Math.Ceiling(_cards.Count / (double)columns);
-        var rowHeights = new int[rows];
-        for (var index = 0; index < _cards.Count; index++)
-        {
-            var row = index / columns;
-            rowHeights[row] = Math.Max(
-                rowHeights[row],
-                (int)Math.Round(_cards[index].LogicalHeight * scale));
-        }
-
-        var requiredWidth = outerPadding * 2 + columns * cardWidth + Math.Max(0, columns - 1) * gap;
-        var requiredHeight = outerPadding * 2 + rowHeights.Sum() + Math.Max(0, rows - 1) * gap;
-        var requiredSize = new Size(requiredWidth, requiredHeight);
-        if (AutoScrollMinSize != requiredSize)
-        {
-            AutoScrollMinSize = requiredSize;
-        }
-
-        var scrollOffset = AutoScrollPosition;
-        var rowOffsets = new int[rows];
-        for (var row = 1; row < rows; row++)
-        {
-            rowOffsets[row] = rowOffsets[row - 1] + rowHeights[row - 1] + gap;
-        }
+        var outerPadding = (int)Math.Round(4 * scale);
+        var gap = (int)Math.Round(10 * scale);
+        var usableWidth = Math.Max(_cards.Count, ClientSize.Width - outerPadding * 2);
+        var availableCardWidth = Math.Max(
+            _cards.Count,
+            usableWidth - gap * (_cards.Count - 1));
+        var heroWeight = _cards[0].Style == MetricCardStyle.Hero ? 1.55 : 1.0;
+        var unitWidth = availableCardWidth / (heroWeight + _cards.Count - 1);
+        var cardHeight = Math.Max(1, ClientSize.Height - outerPadding * 2);
+        var x = outerPadding;
 
         for (var index = 0; index < _cards.Count; index++)
         {
-            var row = index / columns;
-            var column = index % columns;
+            var weight = index == 0 ? heroWeight : 1.0;
+            var cardWidth = index == _cards.Count - 1
+                ? Math.Max(1, ClientSize.Width - outerPadding - x)
+                : Math.Max(1, (int)Math.Round(unitWidth * weight));
             _cards[index].Bounds = new Rectangle(
-                scrollOffset.X + outerPadding + column * (cardWidth + gap),
-                scrollOffset.Y + outerPadding + rowOffsets[row],
+                x,
+                outerPadding,
                 cardWidth,
-                rowHeights[row]);
+                cardHeight);
+            x += cardWidth + gap;
         }
     }
 }
 
 /// <summary>
-/// 在主窗口左侧显示品牌、四个业务入口和本地版本信息，形成稳定的科技风应用外壳。
+/// 在主窗口左侧显示紧凑品牌、三个业务入口和本地版本信息，形成轻量科技风应用外壳。
 /// </summary>
 public sealed class ApplicationSidebar : Panel
 {
@@ -309,49 +338,50 @@ public sealed class ApplicationSidebar : Panel
     private readonly Label _product = new();
     private readonly Label _tagline = new();
     private readonly Label _version = new();
+    private readonly TableLayoutPanel _brand = new();
     private readonly FlowLayoutPanel _navigation = new();
     private readonly Dictionary<DashboardSection, SidebarNavigationButton> _buttons = [];
 
     public event Action<DashboardSection>? SectionRequested;
 
     /// <summary>
-    /// 构造固定宽度侧栏，并按总览、历史、设置、诊断顺序创建矢量图标导航。
+    /// 构造固定宽度侧栏，并按额度趋势、设置、诊断顺序创建矢量图标导航。
     /// </summary>
     public ApplicationSidebar()
     {
         Dock = DockStyle.Fill;
-        Padding = new Padding(18, 24, 18, 18);
+        Padding = new Padding(12, 18, 12, 14);
 
         _overline.AutoSize = true;
         _overline.Text = "CODEX  //  LOCAL";
         _overline.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 8F, FontStyle.Bold);
+        _product.Name = "SidebarProductLabel";
         _product.AutoSize = true;
-        _product.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 13F, FontStyle.Bold);
+        _product.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 10.5F, FontStyle.Bold);
+        _product.Margin = new Padding(0);
         _tagline.AutoSize = true;
         _tagline.Text = "QUOTA INTELLIGENCE";
         _tagline.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 7.5F, FontStyle.Regular);
 
-        var brand = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 3,
-            BackColor = Color.Transparent,
-            Padding = new Padding(6, 0, 0, 0)
-        };
-        brand.RowStyles.Add(new(SizeType.AutoSize));
-        brand.RowStyles.Add(new(SizeType.AutoSize));
-        brand.RowStyles.Add(new(SizeType.AutoSize));
-        brand.Controls.Add(_overline);
-        brand.Controls.Add(_product);
-        brand.Controls.Add(_tagline);
+        _brand.Dock = DockStyle.Fill;
+        _brand.AutoSize = true;
+        _brand.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _brand.ColumnCount = 1;
+        _brand.RowCount = 3;
+        _brand.BackColor = Color.Transparent;
+        _brand.Padding = new Padding(6, 0, 0, 0);
+        _brand.RowStyles.Add(new(SizeType.AutoSize));
+        _brand.RowStyles.Add(new(SizeType.AutoSize));
+        _brand.RowStyles.Add(new(SizeType.AutoSize));
+        _brand.Controls.Add(_overline);
+        _brand.Controls.Add(_product);
+        _brand.Controls.Add(_tagline);
 
         _navigation.Dock = DockStyle.Fill;
         _navigation.FlowDirection = FlowDirection.TopDown;
         _navigation.WrapContents = false;
-        _navigation.Padding = new Padding(0, 10, 0, 0);
+        _navigation.Padding = new Padding(0, 6, 0, 0);
         AddNavigation(DashboardSection.Dashboard, SidebarIcon.Overview);
-        AddNavigation(DashboardSection.History, SidebarIcon.History);
         AddNavigation(DashboardSection.Settings, SidebarIcon.Settings);
         AddNavigation(DashboardSection.Diagnostics, SidebarIcon.Diagnostics);
 
@@ -363,10 +393,10 @@ public sealed class ApplicationSidebar : Panel
         _version.Margin = new Padding(6, 0, 0, 0);
 
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
-        root.RowStyles.Add(new(SizeType.Absolute, 104));
+        root.RowStyles.Add(new(SizeType.AutoSize));
         root.RowStyles.Add(new(SizeType.Percent, 100));
         root.RowStyles.Add(new(SizeType.AutoSize));
-        root.Controls.Add(brand, 0, 0);
+        root.Controls.Add(_brand, 0, 0);
         root.Controls.Add(_navigation, 0, 1);
         root.Controls.Add(_version, 0, 2);
         Controls.Add(root);
@@ -375,13 +405,12 @@ public sealed class ApplicationSidebar : Panel
     }
 
     /// <summary>
-    /// 更新产品名和四个导航入口的当前语言文本。
+    /// 更新产品名和三个导航入口的当前语言文本。
     /// </summary>
     public void ApplyLocalization()
     {
         _product.Text = UiText.Get("ProductName");
         _buttons[DashboardSection.Dashboard].SetText(UiText.Get("TabDashboard"));
-        _buttons[DashboardSection.History].SetText(UiText.Get("TabHistory"));
         _buttons[DashboardSection.Settings].SetText(UiText.Get("TabSettings"));
         _buttons[DashboardSection.Diagnostics].SetText(UiText.Get("TabDiagnostics"));
     }
@@ -424,10 +453,25 @@ public sealed class ApplicationSidebar : Panel
     protected override void OnLayout(LayoutEventArgs levent)
     {
         base.OnLayout(levent);
+        ConstrainProductNameToBrandWidth();
         var buttonWidth = Math.Max(120, _navigation.ClientSize.Width - _navigation.Padding.Horizontal - 4);
         foreach (var button in _buttons.Values)
         {
             button.Width = buttonWidth;
+        }
+    }
+
+    /// <summary>
+    /// 按侧栏品牌区的实际客户宽度限制产品名，使中英文名称在高缩放时换行而不是横向裁切。
+    /// </summary>
+    private void ConstrainProductNameToBrandWidth()
+    {
+        var availableWidth = Math.Max(
+            1,
+            _brand.ClientSize.Width - _brand.Padding.Horizontal - _product.Margin.Horizontal);
+        if (_product.MaximumSize.Width != availableWidth)
+        {
+            _product.MaximumSize = new Size(availableWidth, 0);
         }
     }
 
@@ -450,12 +494,11 @@ public sealed class ApplicationSidebar : Panel
 }
 
 /// <summary>
-/// 定义侧栏四个业务入口的无字体依赖矢量图标。
+/// 定义侧栏三个业务入口的无字体依赖矢量图标。
 /// </summary>
 public enum SidebarIcon
 {
     Overview,
-    History,
     Settings,
     Diagnostics
 }
@@ -478,8 +521,8 @@ public sealed class SidebarNavigationButton : Control
     {
         _icon = icon;
         AccessibleDescription = section.ToString();
-        Height = 52;
-        Margin = new Padding(0, 0, 0, 8);
+        Height = 46;
+        Margin = new Padding(0, 0, 0, 6);
         Cursor = Cursors.Hand;
         TabStop = true;
         AccessibleRole = AccessibleRole.PushButton;
@@ -606,15 +649,6 @@ public sealed class SidebarNavigationButton : Control
                 graphics.DrawRectangle(pen, bounds.Left + 1, bounds.Top + 12, 7, 7);
                 graphics.DrawRectangle(pen, bounds.Left + 12, bounds.Top + 12, 7, 7);
                 break;
-            case SidebarIcon.History:
-                graphics.DrawLine(pen, bounds.Left + 1, bounds.Bottom - 2, bounds.Right - 1, bounds.Bottom - 2);
-                graphics.DrawLine(pen, bounds.Left + 2, bounds.Bottom - 2, bounds.Left + 2, bounds.Top + 1);
-                graphics.DrawLines(pen, [
-                    new(bounds.Left + 4, bounds.Top + 14),
-                    new(bounds.Left + 8, bounds.Top + 10),
-                    new(bounds.Left + 12, bounds.Top + 12),
-                    new(bounds.Left + 18, bounds.Top + 4)]);
-                break;
             case SidebarIcon.Settings:
                 graphics.DrawLine(pen, bounds.Left + 1, bounds.Top + 4, bounds.Right - 1, bounds.Top + 4);
                 graphics.DrawLine(pen, bounds.Left + 1, bounds.Top + 10, bounds.Right - 1, bounds.Top + 10);
@@ -660,9 +694,29 @@ public sealed class ConnectionBadge : Control
             true);
         DoubleBuffered = true;
         BackColor = Color.Transparent;
-        MinimumSize = new Size(210, 34);
-        Size = new Size(230, 34);
+        AutoSize = true;
+        Font = SystemFonts.MessageBoxFont!;
+        Text = BuildText();
+        Size = GetPreferredSize(Size.Empty);
         Anchor = AnchorStyles.Top | AnchorStyles.Right;
+    }
+
+    /// <summary>
+    /// 按当前 DPI、字体和紧凑状态文字测量徽标尺寸，确保绘图区不需要省略号。
+    /// </summary>
+    /// <param name="proposedSize">父布局建议尺寸；徽标按自身内容决定最小所需尺寸。</param>
+    /// <returns>完整容纳状态圆点和单行文字的尺寸。</returns>
+    public override Size GetPreferredSize(Size proposedSize)
+    {
+        var textSize = TextRenderer.MeasureText(
+            BuildText(),
+            Font,
+            Size.Empty,
+            TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+        var dotSize = ScaleLogical(8);
+        var width = ScaleLogical(13) + dotSize + ScaleLogical(8) + textSize.Width + ScaleLogical(13);
+        var height = Math.Max(ScaleLogical(34), textSize.Height + ScaleLogical(12));
+        return new Size(width, height);
     }
 
     /// <summary>
@@ -674,7 +728,9 @@ public sealed class ConnectionBadge : Control
     {
         _connected = connected;
         _updatedAt = updatedAt;
+        Text = BuildText();
         AccessibleName = BuildText();
+        Size = GetPreferredSize(Size.Empty);
         Invalidate();
     }
 
@@ -696,18 +752,25 @@ public sealed class ConnectionBadge : Control
         e.Graphics.FillPath(background, path);
         e.Graphics.DrawPath(border, path);
 
-        var dotSize = Math.Max(8, DeviceDpi / 12);
+        var dotSize = ScaleLogical(8);
         var dotY = (Height - dotSize) / 2;
+        var leftPadding = ScaleLogical(13);
+        var textGap = ScaleLogical(8);
+        var rightPadding = ScaleLogical(13);
         using var dot = new SolidBrush(statusColor);
-        e.Graphics.FillEllipse(dot, 13, dotY, dotSize, dotSize);
-        var textRectangle = new Rectangle(28 + dotSize, 0, Width - 38 - dotSize, Height);
+        e.Graphics.FillEllipse(dot, leftPadding, dotY, dotSize, dotSize);
+        var textLeft = leftPadding + dotSize + textGap;
+        var textRectangle = new Rectangle(textLeft, 0, Math.Max(1, Width - textLeft - rightPadding), Height);
         TextRenderer.DrawText(
             e.Graphics,
-            BuildText(),
-            SystemFonts.MessageBoxFont!,
+            Text,
+            Font,
             textRectangle,
             AppTheme.Current.Text,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            TextFormatFlags.Left |
+            TextFormatFlags.VerticalCenter |
+            TextFormatFlags.NoPadding |
+            TextFormatFlags.SingleLine);
     }
 
     /// <summary>
@@ -715,7 +778,9 @@ public sealed class ConnectionBadge : Control
     /// </summary>
     public void ApplyAppearance()
     {
+        Text = BuildText();
         AccessibleName = BuildText();
+        Size = GetPreferredSize(Size.Empty);
         Invalidate();
     }
 
@@ -727,6 +792,14 @@ public sealed class ConnectionBadge : Control
         "ConnectionBadgeFormat",
         _connected ? UiText.Get("Connected") : UiText.Get("Disconnected"),
         _updatedAt.LocalDateTime);
+
+    /// <summary>
+    /// 将逻辑像素转换为当前显示器 DPI 下的物理像素，供徽标绘制与测量共享。
+    /// </summary>
+    /// <param name="logicalPixels">96 DPI 基准下的逻辑像素。</param>
+    /// <returns>当前 DPI 下至少为 1 的物理像素值。</returns>
+    private int ScaleLogical(int logicalPixels) =>
+        Math.Max(1, (int)Math.Round(logicalPixels * DeviceDpi / 96F));
 
     /// <summary>
     /// 创建适合徽标背景的圆角矩形路径。

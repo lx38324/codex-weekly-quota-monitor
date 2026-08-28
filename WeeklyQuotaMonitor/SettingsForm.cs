@@ -17,6 +17,7 @@ public sealed class SettingsPanel : UserControl
     private readonly NumericUpDown _lookbackHours = Number(1, 720, 24, 0);
     private readonly CheckBox _startWithWindows = new();
     private readonly NumericUpDown _historyDays = Number(1, 3650, 90, 0);
+    private readonly CheckBox _enableOfficialLongContextEstimate = new();
     private readonly ComboBox _regressionMode = ChoiceBox();
     private readonly NumericUpDown _linearPoints = Number(1, 10000, 120, 0);
     private readonly NumericUpDown _segmentHours = Number(0.1m, 8760, 24, 1);
@@ -82,6 +83,7 @@ public sealed class SettingsPanel : UserControl
         _lookbackHours.Value = settings.InitialContextLookbackHours;
         _startWithWindows.Checked = settings.StartWithWindows;
         _historyDays.Value = settings.ChartHistoryDays;
+        _enableOfficialLongContextEstimate.Checked = settings.EnableOfficialLongContextEstimate;
         _linearPoints.Value = settings.Regression.LinearLookbackPoints;
         _segmentHours.Value = (decimal)settings.Regression.SegmentWindowHours;
         _gaussianHours.Value = (decimal)settings.Regression.GaussianBandwidthHours;
@@ -109,6 +111,7 @@ public sealed class SettingsPanel : UserControl
         _revert.Text = UiText.Get("Revert");
         _defaults.Text = UiText.Get("RestoreDefaults");
         _startWithWindows.Text = UiText.Get("SettingsAutostart");
+        _enableOfficialLongContextEstimate.Text = UiText.Get("SettingsOfficialLongContextOption");
         _note.Text = UiText.Format(
             "SettingsNote",
             CodexExecutableResolver.DesktopPackageLocator,
@@ -140,6 +143,7 @@ public sealed class SettingsPanel : UserControl
             ("SettingsMinimumDelta", _minimumDelta),
             ("SettingsLookback", _lookbackHours)]);
         AddSection("SettingsEstimation", [
+            ("SettingsOfficialLongContext", (Control)_enableOfficialLongContextEstimate),
             ("SettingsRegressionMode", _regressionMode),
             ("SettingsLinearPoints", _linearPoints),
             ("SettingsSegmentHours", _segmentHours),
@@ -224,6 +228,7 @@ public sealed class SettingsPanel : UserControl
             InitialContextLookbackHours = decimal.ToInt32(_lookbackHours.Value),
             StartWithWindows = _startWithWindows.Checked,
             ChartHistoryDays = decimal.ToInt32(_historyDays.Value),
+            EnableOfficialLongContextEstimate = _enableOfficialLongContextEstimate.Checked,
             Language = SelectedLanguage(),
             Theme = SelectedTheme(),
             Regression = new RegressionOptions

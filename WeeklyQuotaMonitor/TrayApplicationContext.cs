@@ -15,7 +15,6 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _refreshItem = new();
     private readonly ToolStripMenuItem _detailsItem = new();
     private readonly ToolStripMenuItem _dashboardItem = new();
-    private readonly ToolStripMenuItem _historyItem = new();
     private readonly ToolStripMenuItem _settingsItem = new();
     private readonly ToolStripMenuItem _diagnosticsItem = new();
     private readonly ToolStripMenuItem _dataItem = new();
@@ -81,7 +80,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>
-    /// 创建右键菜单中的立即查询、详情、图表、设置、日志目录和退出动作。
+    /// 创建右键菜单中的立即查询、详情、合并工作台、设置、日志目录和退出动作。
     /// </summary>
     /// <returns>已配置的托盘右键菜单。</returns>
     private ContextMenuStrip BuildMenu()
@@ -90,7 +89,6 @@ public sealed class TrayApplicationContext : ApplicationContext
         _refreshItem.Click += async (_, _) => await _coordinator.RefreshNowAsync();
         _detailsItem.Click += (_, _) => ShowDetails();
         _dashboardItem.Click += (_, _) => ShowDashboard();
-        _historyItem.Click += (_, _) => ShowChart();
         _settingsItem.Click += (_, _) => ShowSettings();
         _diagnosticsItem.Click += (_, _) => ShowDiagnostics();
         _dataItem.Click += (_, _) => OpenDataDirectory();
@@ -100,7 +98,6 @@ public sealed class TrayApplicationContext : ApplicationContext
             _detailsItem,
             new ToolStripSeparator(),
             _dashboardItem,
-            _historyItem,
             _settingsItem,
             _diagnosticsItem,
             new ToolStripSeparator(),
@@ -118,7 +115,6 @@ public sealed class TrayApplicationContext : ApplicationContext
         _refreshItem.Text = UiText.Get("TrayRefresh");
         _detailsItem.Text = UiText.Get("TrayDetails");
         _dashboardItem.Text = UiText.Get("TrayDashboard");
-        _historyItem.Text = UiText.Get("TrayHistory");
         _settingsItem.Text = UiText.Get("TraySettings");
         _diagnosticsItem.Text = UiText.Get("TabDiagnostics");
         _dataItem.Text = UiText.Get("TrayData");
@@ -149,13 +145,13 @@ public sealed class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>
-    /// 左键双击托盘图标时打开完整图表窗；单击不执行任何窗口动作。
+    /// 左键双击托盘图标时打开合并后的额度趋势工作台；单击不执行任何窗口动作。
     /// </summary>
     private void NotifyIconMouseDoubleClick(object? sender, MouseEventArgs e)
     {
         if (ShouldOpenChartFromTray(e.Button, e.Clicks))
         {
-            ShowChart();
+            ShowDashboard();
         }
     }
 
@@ -164,9 +160,9 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// </summary>
     private void UpdateView(MonitorViewSnapshot view)
     {
-        _detailForm.UpdateView(view);
+        _detailForm.UpdateView(view, _coordinator.Settings.EnableOfficialLongContextEstimate);
         _chartForm.UpdateView(view, _coordinator.Settings.Regression);
-        _notifyIcon.Text = BuildTooltip(view);
+        _notifyIcon.Text = BuildTooltip(view, _coordinator.Settings.EnableOfficialLongContextEstimate);
 
         var nextIcon = IconFactory.Create(view.RateLimit?.UsedPercent);
         _notifyIcon.Icon = nextIcon;
@@ -179,7 +175,9 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// </summary>
     private void ShowDetails()
     {
-        _detailForm.UpdateView(_coordinator.CurrentView);
+        _detailForm.UpdateView(
+            _coordinator.CurrentView,
+            _coordinator.Settings.EnableOfficialLongContextEstimate);
         _detailForm.ShowNearCursor();
     }
 
@@ -190,15 +188,6 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         _chartForm.UpdateView(_coordinator.CurrentView, _coordinator.Settings.Regression);
         _chartForm.ShowDashboardTab();
-    }
-
-    /// <summary>
-    /// 显示或激活完整图表窗，并刷新当前回归模式。
-    /// </summary>
-    private void ShowChart()
-    {
-        _chartForm.UpdateView(_coordinator.CurrentView, _coordinator.Settings.Regression);
-        _chartForm.ShowChartTab();
     }
 
     /// <summary>
@@ -236,7 +225,9 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// 构造不超过 Windows NotifyIcon 长度限制的悬停摘要。
     /// </summary>
     /// <returns>最多 63 个字符的 tooltip。</returns>
-    private static string BuildTooltip(MonitorViewSnapshot view)
+    /// <param name="view">协调器发布的最新展示快照。</param>
+    /// <param name="showOfficialLongContext">是否显示可选的官方 >272K 对比口径。</param>
+    private static string BuildTooltip(MonitorViewSnapshot view, bool showOfficialLongContext)
     {
         var baseEstimate = view.EstimatedWeeklyQuotaUsd is decimal baseValue
             ? $"${baseValue.ToString("N0", UiText.Culture)}"
@@ -249,7 +240,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             : $"{view.RateLimit.UsedPercent.ToString("N1", UiText.Culture)}%";
         var text = UiText.Format(
             "TooltipFormat",
-            $"{baseEstimate}/{officialLongEstimate}",
+            showOfficialLongContext ? $"{baseEstimate}/{officialLongEstimate}" : baseEstimate,
             used,
             view.SampleCount);
         return text.Length <= 63 ? text : text[..63];

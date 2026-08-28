@@ -83,13 +83,15 @@ public sealed class DetailForm : Form
     /// 用最新展示快照更新详情文字，不重新查询额度或读取日志。
     /// </summary>
     /// <param name="view">协调器发布的只读展示快照。</param>
-    public void UpdateView(MonitorViewSnapshot view)
+    /// <param name="showOfficialLongContext">是否显示用户显式启用的官方 >272K 对比口径。</param>
+    public void UpdateView(MonitorViewSnapshot view, bool showOfficialLongContext)
     {
-        _estimate.Text =
-            view.EstimatedWeeklyQuotaUsd is decimal baseEstimate &&
-            view.OfficialLongContextEstimatedWeeklyQuotaUsd is decimal longContextEstimate
+        _estimate.Text = view.EstimatedWeeklyQuotaUsd is decimal baseEstimate
+            ? showOfficialLongContext &&
+              view.OfficialLongContextEstimatedWeeklyQuotaUsd is decimal longContextEstimate
                 ? UiText.Format("DetailsEstimates", baseEstimate, longContextEstimate)
-                : UiText.Get("DetailsWaiting");
+                : UiText.Format("DetailsEstimateBase", baseEstimate)
+            : UiText.Get("DetailsWaiting");
         _usage.Text = view.RateLimit is null
             ? UiText.Format(
                 "DetailsNoRateLimit",

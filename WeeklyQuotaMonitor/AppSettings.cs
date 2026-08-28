@@ -21,6 +21,7 @@ public sealed class AppSettings
     public int InitialContextLookbackHours { get; set; } = 24;
     public bool StartWithWindows { get; set; } = true;
     public int ChartHistoryDays { get; set; } = 90;
+    public bool EnableOfficialLongContextEstimate { get; set; }
     public UiLanguage Language { get; set; } = UiLanguage.Auto;
     public UiTheme Theme { get; set; } = UiTheme.System;
     public RegressionOptions Regression { get; set; } = new();
@@ -53,12 +54,12 @@ public sealed class AppSettings
 /// </summary>
 public static class AppSettingsMigration
 {
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
     public const decimal LegacyMaximumSampleUsd = 1000m;
     public const decimal DefaultMaximumSampleUsd = 10000m;
 
     /// <summary>
-    /// 将旧版默认的 1000 美元过滤上限迁移为 10000 美元，补齐自动语言和系统主题，并拒绝未来版本。
+    /// 将旧版默认的 1000 美元过滤上限迁移为 10000 美元，补齐界面偏好，并让新增的 >272K 对比口径保持默认关闭。
     /// </summary>
     /// <param name="settings">从 settings.json 反序列化的设置。</param>
     /// <returns>设置内容发生变化时返回 true。</returns>

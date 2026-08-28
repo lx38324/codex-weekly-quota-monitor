@@ -8,13 +8,12 @@ namespace WeeklyQuotaMonitor;
 public enum DashboardSection
 {
     Dashboard,
-    History,
     Settings,
     Diagnostics
 }
 
 /// <summary>
-/// 提供总览、历史与图表、设置、诊断四个一级页面的常驻主窗口。
+/// 提供合并的额度趋势工作台、设置和诊断三个一级页面的常驻主窗口。
 /// </summary>
 public sealed class ChartForm : Form
 {
@@ -22,11 +21,9 @@ public sealed class ChartForm : Form
     private readonly ApplicationSidebar _sidebar = new();
     private readonly Panel _contentHost = new() { Dock = DockStyle.Fill };
     private readonly Panel _dashboardPage = new() { Dock = DockStyle.Fill };
-    private readonly Panel _historyPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
     private readonly Panel _settingsPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
     private readonly Panel _diagnosticsPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
     private readonly MetricCard _baseEstimateCard = new(MetricCardTone.Primary, MetricCardStyle.Hero);
-    private readonly MetricCard _officialEstimateCard = new(MetricCardTone.Purple, MetricCardStyle.Hero);
     private readonly MetricCard _usedCard = new(MetricCardTone.Warning);
     private readonly MetricCard _remainingCard = new(MetricCardTone.Positive);
     private readonly MetricCard _resetCard = new(MetricCardTone.Purple);
@@ -39,13 +36,15 @@ public sealed class ChartForm : Form
     private readonly Label _regressionEstimate = new() { Name = "RegressionEstimateLabel" };
     private readonly Label _summary = new() { Name = "HistorySummaryLabel" };
     private readonly Label _timeRangeLabel = new();
-    private readonly ComboBox _timeRange = new();
+    private readonly ComboBox _timeRange = new() { Name = "HistoryRangeComboBox" };
+    private readonly Panel _trendFrame = new() { Dock = DockStyle.Fill, Padding = new Padding(1) };
+    private readonly TableLayoutPanel _trendContent = new() { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4 };
     private readonly QuotaChartControl _chart = new();
     private readonly DataGridView _grid = new();
-    private readonly CheckBox _showBaseSamples = SeriesCheckBox(Color.FromArgb(210, 105, 28));
-    private readonly CheckBox _showBaseRegression = SeriesCheckBox(Color.FromArgb(24, 119, 196));
+    private readonly CheckBox _showBaseSamples = SeriesCheckBox(Color.FromArgb(14, 165, 233));
+    private readonly CheckBox _showBaseRegression = SeriesCheckBox(Color.FromArgb(15, 135, 210));
     private readonly CheckBox _showOfficialSamples = SeriesCheckBox(Color.FromArgb(121, 67, 171));
-    private readonly CheckBox _showOfficialRegression = SeriesCheckBox(Color.FromArgb(26, 145, 91));
+    private readonly CheckBox _showOfficialRegression = SeriesCheckBox(Color.FromArgb(139, 92, 246));
     private readonly SettingsPanel _settingsPanel;
     private readonly DiagnosticsPanel _diagnosticsPanel = new();
     private readonly Dictionary<DataGridViewColumn, string> _gridColumnKeys = [];
@@ -54,7 +53,7 @@ public sealed class ChartForm : Form
     private DashboardSection _selectedSection = DashboardSection.Dashboard;
 
     /// <summary>
-    /// 构造四页主窗口，载入设置面板并绑定保存回调。
+    /// 构造三页主窗口，载入设置面板并绑定保存回调。
     /// </summary>
     /// <param name="settings">当前已生效设置。</param>
     /// <param name="applySettings">保存设置后立即应用的回调。</param>
@@ -64,8 +63,8 @@ public sealed class ChartForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
-        MinimumSize = new Size(980, 640);
-        Size = new Size(1180, 760);
+        MinimumSize = new Size(1040, 680);
+        Size = new Size(1280, 820);
         Font = SystemFonts.MessageBoxFont!;
 
         _settingsPanel = new SettingsPanel(settings);
@@ -75,14 +74,13 @@ public sealed class ChartForm : Form
         ConfigureTimeRange();
 
         _dashboardPage.Controls.Add(BuildDashboardPage());
-        _historyPage.Controls.Add(BuildHistoryPage());
         _settingsPage.Controls.Add(_settingsPanel);
         _diagnosticsPage.Controls.Add(_diagnosticsPanel);
-        _contentHost.Controls.AddRange([_dashboardPage, _historyPage, _settingsPage, _diagnosticsPage]);
+        _contentHost.Controls.AddRange([_dashboardPage, _settingsPage, _diagnosticsPage]);
         _sidebar.SectionRequested += SelectSection;
 
         var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
-        shell.ColumnStyles.Add(new(SizeType.Absolute, 220));
+        shell.ColumnStyles.Add(new(SizeType.Absolute, 200));
         shell.ColumnStyles.Add(new(SizeType.Percent, 100));
         shell.RowStyles.Add(new(SizeType.Percent, 100));
         shell.Controls.Add(_sidebar, 0, 0);
@@ -97,20 +95,20 @@ public sealed class ChartForm : Form
     public DashboardSection SelectedSection => _selectedSection;
 
     /// <summary>
-    /// 构造标题、说明、响应式指标卡和运行状态组成的总览页。
+    /// 构造标题、紧凑指标带、趋势图和逐点明细合并而成的额度工作台。
     /// </summary>
-    /// <returns>可停靠到总览标签页的根控件。</returns>
+    /// <returns>可停靠到额度趋势入口的根控件。</returns>
     private Control BuildDashboardPage()
     {
         _dashboardEyebrow.AutoSize = true;
-        _dashboardEyebrow.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 8F, FontStyle.Bold);
+        _dashboardEyebrow.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 7.5F, FontStyle.Bold);
         _dashboardEyebrow.ForeColor = Color.FromArgb(8, 145, 178);
-        _dashboardEyebrow.Margin = new Padding(0, 0, 0, 4);
+        _dashboardEyebrow.Margin = new Padding(0, 0, 0, 2);
         _dashboardTitle.AutoSize = true;
-        _dashboardTitle.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 21F, FontStyle.Bold);
-        _dashboardTitle.Margin = new Padding(0, 0, 0, 6);
+        _dashboardTitle.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 19F, FontStyle.Bold);
+        _dashboardTitle.Margin = new Padding(0, 0, 0, 3);
         _dashboardSubtitle.AutoSize = true;
-        _dashboardSubtitle.MaximumSize = new Size(760, 0);
+        _dashboardSubtitle.MaximumSize = new Size(820, 0);
         _dashboardSubtitle.ForeColor = AppTheme.Current.MutedText;
 
         var header = new TableLayoutPanel
@@ -119,24 +117,23 @@ public sealed class ChartForm : Form
             AutoSize = true,
             ColumnCount = 2,
             RowCount = 3,
-            Margin = new Padding(8, 0, 8, 8)
+            Margin = new Padding(4, 0, 4, 8)
         };
         header.ColumnStyles.Add(new(SizeType.Percent, 100));
         header.ColumnStyles.Add(new(SizeType.AutoSize));
         header.RowStyles.Add(new(SizeType.AutoSize));
         header.RowStyles.Add(new(SizeType.AutoSize));
         header.RowStyles.Add(new(SizeType.AutoSize));
-        _connectionBadge.Margin = new Padding(20, 5, 0, 0);
+        _connectionBadge.Margin = new Padding(20, 2, 0, 0);
         header.Controls.Add(_dashboardEyebrow, 0, 0);
         header.Controls.Add(_dashboardTitle, 0, 1);
         header.Controls.Add(_dashboardSubtitle, 0, 2);
         header.Controls.Add(_connectionBadge, 1, 1);
         header.SetRowSpan(_connectionBadge, 2);
 
-        _dashboardGrid.Margin = new Padding(0, 12, 0, 0);
+        _dashboardGrid.Margin = new Padding(0, 0, 0, 8);
         _dashboardGrid.SetCards(
             _baseEstimateCard,
-            _officialEstimateCard,
             _usedCard,
             _remainingCard,
             _resetCard,
@@ -146,44 +143,48 @@ public sealed class ChartForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 2,
-            Padding = new Padding(26, 22, 26, 20)
+            RowCount = 3,
+            Padding = new Padding(20, 16, 20, 18)
         };
         content.ColumnStyles.Add(new(SizeType.Percent, 100));
+        content.RowStyles.Add(new(SizeType.AutoSize));
         content.RowStyles.Add(new(SizeType.AutoSize));
         content.RowStyles.Add(new(SizeType.Percent, 100));
         content.Controls.Add(header, 0, 0);
         content.Controls.Add(_dashboardGrid, 0, 1);
+        content.Controls.Add(BuildTrendWorkspace(), 0, 2);
 
         return content;
     }
 
     /// <summary>
-    /// 构造额度横幅、时间范围、系列开关、绘图区和采样明细表组成的历史页。
+    /// 构造额度横幅、时间范围、系列开关、绘图区和采样明细表组成的趋势工作区。
     /// </summary>
-    /// <returns>可停靠到历史标签页的根控件。</returns>
-    private Control BuildHistoryPage()
+    /// <returns>带轻量边框和留白的趋势工作区。</returns>
+    private Control BuildTrendWorkspace()
     {
         _regressionEstimate.Dock = DockStyle.Fill;
         _regressionEstimate.AutoSize = true;
-        _regressionEstimate.Padding = new Padding(12, 10, 8, 6);
-        _regressionEstimate.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 12F, FontStyle.Bold);
+        _regressionEstimate.Padding = new Padding(12, 9, 8, 3);
+        _regressionEstimate.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 11F, FontStyle.Bold);
 
         _summary.Dock = DockStyle.Fill;
         _summary.AutoSize = true;
-        _summary.Padding = new Padding(12, 2, 8, 6);
+        _summary.Padding = new Padding(12, 0, 8, 4);
+        _summary.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 8.5F);
 
         var options = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
             AutoSize = true,
-            Padding = new Padding(10, 2, 8, 5),
+            Padding = new Padding(8, 0, 8, 5),
             WrapContents = true
         };
         _timeRangeLabel.AutoSize = true;
-        _timeRangeLabel.Margin = new Padding(4, 7, 4, 3);
-        _timeRange.Width = 125;
+        _timeRangeLabel.Margin = new Padding(4, 8, 4, 3);
+        _timeRange.Width = 112;
         _timeRange.DropDownStyle = ComboBoxStyle.DropDownList;
+        _timeRange.FlatStyle = FlatStyle.Flat;
         options.Controls.AddRange([
             _timeRangeLabel,
             _timeRange,
@@ -193,32 +194,35 @@ public sealed class ChartForm : Form
             _showOfficialRegression]);
 
         _chart.Dock = DockStyle.Fill;
-        var split = new SplitContainer
+        var dataStack = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Orientation = Orientation.Horizontal,
-            SplitterDistance = 395,
-            Panel1MinSize = 220,
-            Panel2MinSize = 150
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = new Padding(8, 0, 8, 8)
         };
-        split.Panel1.Controls.Add(_chart);
-        split.Panel2.Controls.Add(_grid);
+        dataStack.ColumnStyles.Add(new(SizeType.Percent, 100));
+        dataStack.RowStyles.Add(new(SizeType.Percent, 68));
+        dataStack.RowStyles.Add(new(SizeType.Percent, 32));
+        dataStack.Controls.Add(_chart, 0, 0);
+        dataStack.Controls.Add(_grid, 0, 1);
 
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4 };
-        root.ColumnStyles.Add(new(SizeType.Percent, 100));
-        root.RowStyles.Add(new(SizeType.AutoSize));
-        root.RowStyles.Add(new(SizeType.AutoSize));
-        root.RowStyles.Add(new(SizeType.AutoSize));
-        root.RowStyles.Add(new(SizeType.Percent, 100));
-        root.Controls.Add(_regressionEstimate, 0, 0);
-        root.Controls.Add(_summary, 0, 1);
-        root.Controls.Add(options, 0, 2);
-        root.Controls.Add(split, 0, 3);
-        return root;
+        _trendContent.ColumnStyles.Add(new(SizeType.Percent, 100));
+        _trendContent.RowStyles.Add(new(SizeType.AutoSize));
+        _trendContent.RowStyles.Add(new(SizeType.AutoSize));
+        _trendContent.RowStyles.Add(new(SizeType.AutoSize));
+        _trendContent.RowStyles.Add(new(SizeType.Percent, 100));
+        _trendContent.Controls.Add(_regressionEstimate, 0, 0);
+        _trendContent.Controls.Add(_summary, 0, 1);
+        _trendContent.Controls.Add(options, 0, 2);
+        _trendContent.Controls.Add(dataStack, 0, 3);
+        _trendFrame.Margin = new Padding(4, 0, 4, 0);
+        _trendFrame.Controls.Add(_trendContent);
+        return _trendFrame;
     }
 
     /// <summary>
-    /// 绑定四个系列开关，并把默认全选状态同步到绘图控件。
+    /// 绑定基础与可选官方口径的四个系列开关，并按设置同步实际可见状态。
     /// </summary>
     private void ConfigureSeriesOptions()
     {
@@ -237,12 +241,12 @@ public sealed class ChartForm : Form
     }
 
     /// <summary>
-    /// 绑定历史时间范围选择事件，默认显示全部保留数据。
+    /// 绑定历史时间范围选择事件，首次打开时默认显示最近 30 天。
     /// </summary>
     private void ConfigureTimeRange()
     {
         _timeRange.SelectedIndexChanged += (_, _) => RefreshHistoryPage();
-        BindTimeRanges(HistoryRange.All);
+        BindTimeRanges(HistoryRange.Days30);
     }
 
     /// <summary>
@@ -250,11 +254,32 @@ public sealed class ChartForm : Form
     /// </summary>
     private void ApplySeriesVisibility()
     {
+        var showOfficial = _settings.EnableOfficialLongContextEstimate;
         _chart.SetSeriesVisibility(new(
             _showBaseSamples.Checked,
             _showBaseRegression.Checked,
-            _showOfficialSamples.Checked,
-            _showOfficialRegression.Checked));
+            showOfficial && _showOfficialSamples.Checked,
+            showOfficial && _showOfficialRegression.Checked));
+    }
+
+    /// <summary>
+    /// 根据显式设置同步官方 >272K 系列开关和表格列，默认不让实验口径占用主界面空间。
+    /// </summary>
+    private void ApplyOptionalOfficialContextVisibility()
+    {
+        var enabled = _settings.EnableOfficialLongContextEstimate;
+        _showOfficialSamples.Visible = enabled;
+        _showOfficialRegression.Visible = enabled;
+        foreach (DataGridViewColumn column in _grid.Columns)
+        {
+            if (column.DataPropertyName is nameof(SampleGridRow.OfficialLongContextIntervalApiEquivalentUsd) or
+                nameof(SampleGridRow.OfficialLongContextEstimatedWeeklyQuotaUsd))
+            {
+                column.Visible = enabled;
+            }
+        }
+
+        ApplySeriesVisibility();
     }
 
     /// <summary>
@@ -267,16 +292,30 @@ public sealed class ChartForm : Form
         _settingsPanel.LoadSettings(settings);
         ApplyLocalization();
         AppTheme.Apply(this);
+        foreach (var option in new[]
+                 {
+                     _showBaseSamples,
+                     _showBaseRegression,
+                     _showOfficialSamples,
+                     _showOfficialRegression
+                 })
+        {
+            SizeSeriesOptionToText(option);
+            ApplySeriesOptionAppearance(option);
+        }
         _sidebar.ApplyAppearance();
         _dashboardEyebrow.ForeColor = Color.FromArgb(8, 145, 178);
         _dashboardSubtitle.ForeColor = AppTheme.Current.MutedText;
         _connectionBadge.ApplyAppearance();
+        _trendFrame.BackColor = AppTheme.Current.Border;
+        _trendContent.BackColor = AppTheme.Current.Surface;
         _chart.ApplyAppearance();
+        ApplyOptionalOfficialContextVisibility();
         RefreshAllPages();
     }
 
     /// <summary>
-    /// 刷新主窗口、四个页签、系列、时间范围和表格标题的中英文文本。
+    /// 刷新主窗口、三个一级页面、系列、时间范围和表格标题的中英文文本。
     /// </summary>
     private void ApplyLocalization()
     {
@@ -311,12 +350,11 @@ public sealed class ChartForm : Form
     }
 
     /// <summary>
-    /// 选择历史与图表页并显示或激活主窗口。
+    /// 兼容原图表入口并打开已经合并趋势图的总览工作台。
     /// </summary>
     public void ShowChartTab()
     {
-        ShowWindow();
-        SelectSection(DashboardSection.History);
+        ShowDashboardTab();
     }
 
     /// <summary>
@@ -348,12 +386,11 @@ public sealed class ChartForm : Form
         var target = section switch
         {
             DashboardSection.Dashboard => _dashboardPage,
-            DashboardSection.History => _historyPage,
             DashboardSection.Settings => _settingsPage,
             DashboardSection.Diagnostics => _diagnosticsPage,
             _ => throw new InvalidOperationException($"不支持的主窗口页面：{section}。")
         };
-        foreach (var page in new[] { _dashboardPage, _historyPage, _settingsPage, _diagnosticsPage })
+        foreach (var page in new[] { _dashboardPage, _settingsPage, _diagnosticsPage })
         {
             page.Visible = ReferenceEquals(page, target);
         }
@@ -417,10 +454,6 @@ public sealed class ChartForm : Form
             UiText.Get("EstimateBase"),
             EstimateValue(view.EstimatedWeeklyQuotaUsd),
             UiText.Format("DashboardEstimateCaption", view.RegressionCurve.Count));
-        _officialEstimateCard.SetContent(
-            UiText.Get("EstimateOfficial"),
-            EstimateValue(view.OfficialLongContextEstimatedWeeklyQuotaUsd),
-            UiText.Format("DashboardEstimateCaption", view.OfficialLongContextRegressionCurve.Count));
         _usedCard.SetContent(
             UiText.Get("CardUsed"),
             PercentValue(used),
@@ -433,7 +466,7 @@ public sealed class ChartForm : Form
         _remainingCard.SetProgress(remaining);
         _resetCard.SetContent(
             UiText.Get("CardReset"),
-            view.RateLimit?.ResetsAt.LocalDateTime.ToString("MM/dd HH:mm", UiText.Culture) ?? UiText.Get("Unknown"),
+            view.RateLimit?.ResetsAt.LocalDateTime.ToString("M/d HH:mm", UiText.Culture) ?? UiText.Get("Unknown"),
             UiText.Get("DashboardResetCaption"));
         _sampleCard.SetContent(
             UiText.Get("CardSamples"),
@@ -462,43 +495,47 @@ public sealed class ChartForm : Form
         };
         var samples = _view.Samples.Where(sample => sample.Timestamp >= cutoff).ToArray();
         var baseCurve = _view.RegressionCurve.Where(point => point.Timestamp >= cutoff).ToArray();
-        var officialCurve = _view.OfficialLongContextRegressionCurve
-            .Where(point => point.Timestamp >= cutoff)
-            .ToArray();
+        var officialCurve = _settings.EnableOfficialLongContextEstimate
+            ? _view.OfficialLongContextRegressionCurve
+                .Where(point => point.Timestamp >= cutoff)
+                .ToArray()
+            : [];
 
         var baseEstimate = RegressionEstimateText(
             baseCurve.LastOrDefault()?.Value,
             baseCurve.Length,
             samples.Length);
-        var officialEstimate = RegressionEstimateText(
-            officialCurve.LastOrDefault()?.Value,
-            officialCurve.Length,
-            samples.Length);
-        _regressionEstimate.Text = UiText.Format(
-            "CurrentEstimateFormat",
-            ModeName(_settings.Regression.Mode),
-            baseEstimate,
-            officialEstimate);
+        _regressionEstimate.Text = _settings.EnableOfficialLongContextEstimate
+            ? UiText.Format(
+                "CurrentEstimateDualFormat",
+                ModeName(_settings.Regression.Mode),
+                baseEstimate,
+                RegressionEstimateText(
+                    officialCurve.LastOrDefault()?.Value,
+                    officialCurve.Length,
+                    samples.Length))
+            : UiText.Format(
+                "CurrentEstimateBaseFormat",
+                ModeName(_settings.Regression.Mode),
+                baseEstimate);
         _regressionEstimate.ForeColor = AppTheme.Current.Accent;
 
-        var filterHint = samples.Length > 0 && (baseCurve.Length == 0 || officialCurve.Length == 0)
+        var filterHint = samples.Length > 0 &&
+                         (baseCurve.Length == 0 ||
+                          (_settings.EnableOfficialLongContextEstimate && officialCurve.Length == 0))
             ? UiText.Get("FilterHint")
             : string.Empty;
         var authoritative = _view.RateLimit is null
             ? "--"
             : PercentValue(_view.RateLimit.UsedPercent);
         var latestValid = samples.OrderBy(sample => sample.Timestamp).LastOrDefault()?.UsedPercent;
-        var pending = _view.HistoricalReplayUnattributedUsedPercents.Count == 0
-            ? UiText.Get("None")
-            : string.Join(", ", _view.HistoricalReplayUnattributedUsedPercents.Select(percent => PercentValue(percent)));
         _summary.Text = UiText.Format(
-            "SummaryFormat",
+            "TrendSummaryFormat",
             authoritative,
             latestValid is decimal value ? PercentValue(value) : UiText.Get("None"),
-            pending,
             samples.Length,
             _view.ArchivedSampleCount,
-            _settings.Regression.MaximumSampleUsd,
+            _view.HistoricalReplayUnattributedUsedPercents.Count,
             filterHint);
         _summary.ForeColor = AppTheme.Current.MutedText;
 
@@ -536,6 +573,19 @@ public sealed class ChartForm : Form
         _grid.AutoGenerateColumns = false;
         _grid.RowHeadersVisible = false;
         _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        _grid.BorderStyle = BorderStyle.None;
+        _grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+        _grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+        _grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+        _grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.DisplayedCellsExceptHeaders;
+        _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells;
+        _grid.MultiSelect = false;
+        _grid.TabStop = false;
+        _grid.DataBindingComplete += (_, _) =>
+        {
+            _grid.ClearSelection();
+            _grid.CurrentCell = null;
+        };
         AddGridColumn("GridTime", nameof(SampleGridRow.Timestamp), 145, "yyyy-MM-dd HH:mm:ss");
         AddGridColumn("GridUsed", nameof(SampleGridRow.UsedPercent), 70, "F3");
         AddGridColumn("GridDelta", nameof(SampleGridRow.DeltaPercent), 65, "F3");
@@ -567,6 +617,7 @@ public sealed class ChartForm : Form
             HeaderText = UiText.Get(titleKey),
             DataPropertyName = property,
             Width = width,
+            MinimumWidth = Math.Max(48, width),
             DefaultCellStyle = new DataGridViewCellStyle { Format = format }
         };
         _grid.Columns.Add(column);
@@ -591,23 +642,91 @@ public sealed class ChartForm : Form
     }
 
     /// <summary>
-    /// 返回当前时间范围；控件尚未绑定时按全部处理。
+    /// 返回当前时间范围；控件尚未绑定时按默认的最近 30 天处理。
     /// </summary>
     private HistoryRange SelectedHistoryRange() =>
-        _timeRange.SelectedItem is RangeChoice selected ? selected.Range : HistoryRange.All;
+        _timeRange.SelectedItem is RangeChoice selected ? selected.Range : HistoryRange.Days30;
 
     /// <summary>
     /// 创建默认选中的曲线显隐选项，并使用对应系列颜色强化辨识。
     /// </summary>
     /// <param name="color">曲线绘制颜色。</param>
     /// <returns>可加入横向选项区的复选框。</returns>
-    private static CheckBox SeriesCheckBox(Color color) => new()
+    private static CheckBox SeriesCheckBox(Color color)
     {
-        Checked = true,
-        AutoSize = true,
-        ForeColor = color,
-        Margin = new Padding(12, 6, 16, 3)
-    };
+        var option = new CheckBox
+        {
+            Checked = true,
+            AutoSize = false,
+            AutoEllipsis = false,
+            Appearance = Appearance.Button,
+            FlatStyle = FlatStyle.Flat,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(7, 2, 7, 2),
+            MinimumSize = new Size(112, 28),
+            Margin = new Padding(8, 3, 4, 3),
+            Tag = color,
+            UseVisualStyleBackColor = false
+        };
+        option.TextChanged += (_, _) => SizeSeriesOptionToText(option);
+        option.FontChanged += (_, _) => SizeSeriesOptionToText(option);
+        option.CheckedChanged += (_, _) => ApplySeriesOptionAppearance(option);
+        SizeSeriesOptionToText(option);
+        ApplySeriesOptionAppearance(option);
+        return option;
+    }
+
+    /// <summary>
+    /// 使用当前字体和 DPI 测量系列按钮文字，并为扁平按钮边框预留额外空间，防止末字裁切。
+    /// </summary>
+    /// <param name="option">需要按可见文字调整尺寸的系列按钮。</param>
+    private static void SizeSeriesOptionToText(CheckBox option)
+    {
+        var textSize = TextRenderer.MeasureText(
+            option.Text,
+            option.Font,
+            Size.Empty,
+            TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+        var horizontalChrome = Math.Max(20, (int)Math.Ceiling(24 * option.DeviceDpi / 96F));
+        var verticalChrome = Math.Max(6, (int)Math.Ceiling(8 * option.DeviceDpi / 96F));
+        option.Size = new Size(
+            Math.Max(option.MinimumSize.Width, textSize.Width + option.Padding.Horizontal + horizontalChrome),
+            Math.Max(option.MinimumSize.Height, textSize.Height + option.Padding.Vertical + verticalChrome));
+    }
+
+    /// <summary>
+    /// 以实色系列色和白字突出选中项，以中性底色和弱化文字表示未选中项。
+    /// </summary>
+    /// <param name="option">需要同步勾选视觉状态的系列按钮。</param>
+    private static void ApplySeriesOptionAppearance(CheckBox option)
+    {
+        var accent = option.Tag is Color color
+            ? color
+            : throw new InvalidOperationException("系列按钮缺少对应的曲线颜色。");
+        var selectedBackground = ControlPaint.Dark(accent, 0.24F);
+        if (option.Checked)
+        {
+            option.BackColor = selectedBackground;
+            option.ForeColor = Color.White;
+            option.FlatAppearance.BorderColor = selectedBackground;
+            option.FlatAppearance.BorderSize = 2;
+            option.FlatAppearance.CheckedBackColor = selectedBackground;
+            option.FlatAppearance.MouseOverBackColor = ControlPaint.Light(selectedBackground, 0.08F);
+            option.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(selectedBackground, 0.08F);
+        }
+        else
+        {
+            option.BackColor = AppTheme.Current.SurfaceAlternate;
+            option.ForeColor = AppTheme.Current.MutedText;
+            option.FlatAppearance.BorderColor = AppTheme.Current.Border;
+            option.FlatAppearance.BorderSize = 1;
+            option.FlatAppearance.CheckedBackColor = selectedBackground;
+            option.FlatAppearance.MouseOverBackColor = ControlPaint.Light(AppTheme.Current.SurfaceAlternate, 0.04F);
+            option.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(AppTheme.Current.SurfaceAlternate, 0.04F);
+        }
+
+        option.Invalidate();
+    }
 
     /// <summary>
     /// 把可空额度转换为固定 USD 符号的区域化文本。
@@ -671,7 +790,7 @@ public sealed class ChartForm : Form
     }
 
     /// <summary>
-    /// 定义历史页支持的四种时间范围。
+    /// 定义合并趋势工作台支持的四种时间范围。
     /// </summary>
     private enum HistoryRange
     {

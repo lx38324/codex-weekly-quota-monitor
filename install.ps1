@@ -93,7 +93,7 @@ if (Test-Path -LiteralPath $settingsFile -PathType Leaf) {
 }
 else {
     $settings = [ordered]@{
-        SettingsSchemaVersion = 3
+        SettingsSchemaVersion = 4
         CodexExecutable = $CodexExecutable
         CodexArguments = 'app-server --listen stdio://'
         SessionRoot = (Join-Path $env:USERPROFILE '.codex\sessions')
@@ -104,6 +104,7 @@ else {
         InitialContextLookbackHours = 24
         StartWithWindows = $true
         ChartHistoryDays = 90
+        EnableOfficialLongContextEstimate = $false
         Language = 0
         Theme = 0
         Regression = [ordered]@{

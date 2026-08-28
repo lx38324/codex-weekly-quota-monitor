@@ -34,9 +34,12 @@ internal static class Program
             TestAutomaticWindowsLanguageSelection,
             TestManualLanguagePersistsAndOverridesWindows,
             TestSettingsSchema2AddsAppearancePreferences,
+            TestOfficialLongContextEstimateIsOptIn,
             TestThemeSelectionRespectsManualOverride,
             TestDashboardLayoutAtSupportedDpiScales,
             TestDashboardFitsReportedViewport,
+            TestDashboardFitsHighScaleScreenshotViewport,
+            TestTrendControlsFitHighlightAndDefaultToThirtyDays,
             TestShortContextStandardPricing,
             TestLongContextStandardPricing,
             TestLongContextOfficialSurchargeCombinesWithFast,
@@ -149,7 +152,7 @@ internal static class Program
         {
             Equal(
                 true,
-                FindControls<SidebarNavigationButton>(englishForm).Any(button => button.Text == "Dashboard"),
+                FindControls<SidebarNavigationButton>(englishForm).Any(button => button.Text == "Overview & trends"),
                 "手动英文后侧栏应显示英文导航");
         }
 
@@ -171,13 +174,49 @@ internal static class Program
         };
         var changed = AppSettingsMigration.Apply(settings);
         Equal(true, changed, "schema 2 应迁移到当前版本");
-        Equal(3, settings.SettingsSchemaVersion, "迁移后设置版本");
+        Equal(4, settings.SettingsSchemaVersion, "迁移后设置版本");
+        Equal(false, settings.EnableOfficialLongContextEstimate, "旧配置迁移后不得默认开启 >272K 对比口径");
         Equal(UiLanguage.Auto, settings.Language, "旧设置默认使用自动系统语言");
         Equal(UiTheme.System, settings.Theme, "旧设置默认使用系统主题");
         Equal(
             AppSettingsMigration.DefaultMaximumSampleUsd,
             settings.Regression.MaximumSampleUsd,
             "schema 2 已迁移上限不得再次改变");
+    }
+
+    /// <summary>
+    /// 验证官方 >272K 对比口径默认关闭，只有用户显式开启后才显示第二组曲线和表格列。
+    /// </summary>
+    private static void TestOfficialLongContextEstimateIsOptIn()
+    {
+        var settings = new AppSettings();
+        using var form = new ChartForm(settings, _ => { });
+        form.UpdateView(CreateDashboardPreviewView(), settings.Regression);
+        form.ShowDashboardTab();
+        Application.DoEvents();
+
+        var officialSeries = FindControls<CheckBox>(form)
+            .Where(checkBox => checkBox.Text.Contains("官方长", StringComparison.Ordinal))
+            .ToArray();
+        Equal(2, officialSeries.Length, "图表应保留两项可选的官方长上下文系列");
+        Equal(true, officialSeries.All(checkBox => !checkBox.Visible), "默认不得显示官方长上下文系列");
+        var officialColumns = FindControls<DataGridView>(form).Single().Columns
+            .Cast<DataGridViewColumn>()
+            .Where(column => column.DataPropertyName.Contains("OfficialLongContext", StringComparison.Ordinal))
+            .ToArray();
+        Equal(2, officialColumns.Length, "表格应保留两列官方长上下文字段");
+        Equal(true, officialColumns.All(column => !column.Visible), "默认不得显示官方长上下文表格列");
+        var estimate = FindControls<Label>(form)
+            .Single(label => label.Name == "RegressionEstimateLabel");
+        Equal(false, estimate.Text.Contains("272K", StringComparison.Ordinal), "默认额度横幅不得出现 >272K 对比");
+
+        settings.EnableOfficialLongContextEstimate = true;
+        form.ApplyPreferences(settings);
+        Application.DoEvents();
+        Equal(true, officialSeries.All(checkBox => checkBox.Visible), "显式启用后应显示官方长上下文系列");
+        Equal(true, officialColumns.All(column => column.Visible), "显式启用后应显示官方长上下文表格列");
+        Equal(true, estimate.Text.Contains("272K", StringComparison.Ordinal), "显式启用后额度横幅应显示 >272K 对比");
+        form.Hide();
     }
 
     /// <summary>
@@ -199,14 +238,34 @@ internal static class Program
         foreach (var scale in new[] { 1F, 1.25F, 1.5F, 2F })
         {
             using var form = new ChartForm(new AppSettings(), _ => { });
+            form.ClientSize = new Size(1160, 730);
+            form.UpdateView(
+                CreateDashboardPreviewView(),
+                new RegressionOptions { Mode = RegressionMode.GaussianAggregation });
             form.Scale(new SizeF(scale, scale));
+            form.ClientSize = new Size(
+                (int)Math.Round(1160 * scale),
+                (int)Math.Round(730 * scale));
             form.PerformLayout();
             Equal(1, FindControls<ApplicationSidebar>(form).Count(), $"{scale:P0} 缩放下应保留唯一科技侧栏");
-            Equal(4, FindControls<SidebarNavigationButton>(form).Count(), $"{scale:P0} 缩放下应保留四个业务入口");
+            Equal(3, FindControls<SidebarNavigationButton>(form).Count(), $"{scale:P0} 缩放下应保留三个业务入口");
             form.ShowDashboardTab();
+            Application.DoEvents();
             Equal(DashboardSection.Dashboard, form.SelectedSection, $"{scale:P0} 缩放下总览可达");
+            AssertMetricCardsFullyVisible(form, $"{scale:P0} 缩放");
+            var grid = FindControls<DataGridView>(form).Single();
+            var headerTextHeight = TextRenderer.MeasureText("本地时间", grid.Font).Height;
+            var rowTextHeight = TextRenderer.MeasureText("2026-08-27 17:03:00", grid.Font).Height;
+            Equal(
+                true,
+                grid.ColumnHeadersHeight >= headerTextHeight,
+                $"{scale:P0} 缩放下表头高度应随字体增长");
+            Equal(
+                true,
+                grid.Rows.Cast<DataGridViewRow>().All(row => row.Height >= rowTextHeight),
+                $"{scale:P0} 缩放下数据行高度应随字体增长");
             form.ShowChartTab();
-            Equal(DashboardSection.History, form.SelectedSection, $"{scale:P0} 缩放下历史可达");
+            Equal(DashboardSection.Dashboard, form.SelectedSection, $"{scale:P0} 缩放下旧图表入口应落到合并工作台");
             form.ShowSettingsTab(new AppSettings());
             Equal(DashboardSection.Settings, form.SelectedSection, $"{scale:P0} 缩放下设置可达");
             form.ShowDiagnosticsTab();
@@ -216,7 +275,33 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证用户截图对应的 1160×730 客户区内六张指标卡和连接徽标完整可见，且卡片文字保持透明背景和大号主值。
+    /// 验证每张指标卡的首选高度和所有文字矩形均落在卡片客户区内。
+    /// </summary>
+    /// <param name="form">已经显示并完成布局的主窗口。</param>
+    /// <param name="context">用于失败信息区分 DPI 档位的上下文。</param>
+    private static void AssertMetricCardsFullyVisible(ChartForm form, string context)
+    {
+        var cards = FindControls<MetricCard>(form).ToArray();
+        Equal(5, cards.Length, $"{context}应显示五张核心指标卡");
+        foreach (var card in cards)
+        {
+            Equal(
+                true,
+                card.Height >= card.GetPreferredSize(new Size(card.Width, 0)).Height,
+                $"{context}指标卡 {card.AccessibleName} 高度不得低于字体首选高度");
+            foreach (var label in FindControls<Label>(card))
+            {
+                var labelRectangle = card.RectangleToClient(label.RectangleToScreen(label.ClientRectangle));
+                Equal(
+                    true,
+                    card.ClientRectangle.Contains(labelRectangle),
+                    $"{context}指标卡 {card.AccessibleName} 的文字 {label.Text} 不得被裁切");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 验证用户截图对应的 1160×730 客户区内五张指标卡、趋势图和连接徽标完整可见。
     /// </summary>
     private static void TestDashboardFitsReportedViewport()
     {
@@ -229,7 +314,8 @@ internal static class Program
         var cardGrid = FindControls<DashboardCardGrid>(form).Single();
         var visibleGrid = cardGrid.RectangleToScreen(cardGrid.ClientRectangle);
         var cards = FindControls<MetricCard>(cardGrid).ToArray();
-        Equal(6, cards.Length, "总览应只显示六张核心指标卡");
+        Equal(5, cards.Length, "合并工作台默认应显示五张核心指标卡");
+        AssertMetricCardsFullyVisible(form, "1160×730 视口");
         foreach (var card in cards)
         {
             var cardRectangle = card.RectangleToScreen(card.ClientRectangle);
@@ -240,13 +326,103 @@ internal static class Program
                 $"指标卡 {card.AccessibleName} 的文字不得出现白色贴片背景");
             Equal(
                 true,
-                FindControls<Label>(card).Any(label => label.Font.Size >= 20F),
+                FindControls<Label>(card).Any(label => label.Font.Size >=
+                    (card.Style == MetricCardStyle.Hero ? 20F : 16F)),
                 $"指标卡 {card.AccessibleName} 应保留醒目的大号主值");
         }
 
         var badge = FindControls<ConnectionBadge>(form).Single();
+        var chart = FindControls<QuotaChartControl>(form).Single();
         var visibleForm = form.RectangleToScreen(form.ClientRectangle);
         Equal(true, visibleForm.Contains(badge.RectangleToScreen(badge.ClientRectangle)), "连接状态徽标不得被裁切");
+        Equal(true, visibleForm.Contains(chart.RectangleToScreen(chart.ClientRectangle)), "趋势图必须与指标卡同屏且不得被裁切");
+        form.Hide();
+    }
+
+    /// <summary>
+    /// 验证用户最新 1265×812 窗口截图对应的客户区在 125% 内容缩放后，品牌、状态徽标和样本说明仍完整显示。
+    /// </summary>
+    private static void TestDashboardFitsHighScaleScreenshotViewport()
+    {
+        using var form = new ChartForm(new AppSettings(), _ => { });
+        form.ClientSize = new Size(1261, 773);
+        form.UpdateView(CreateDashboardPreviewView(), new RegressionOptions { Mode = RegressionMode.GaussianAggregation });
+        form.Scale(new SizeF(1.25F, 1.25F));
+        form.ClientSize = new Size(1261, 773);
+        form.ShowDashboardTab();
+        Application.DoEvents();
+
+        var sidebar = FindControls<ApplicationSidebar>(form).Single();
+        var product = FindControls<Label>(sidebar).Single(label => label.Name == "SidebarProductLabel");
+        var productRectangle = sidebar.RectangleToClient(product.RectangleToScreen(product.ClientRectangle));
+        Equal(true, sidebar.ClientRectangle.Contains(productRectangle), "125% 缩放下侧栏产品名不得横向裁切");
+
+        var badge = FindControls<ConnectionBadge>(form).Single();
+        Equal("已连接 · 12:34:56", badge.Text, "连接徽标应使用不含上午/下午前缀的紧凑 24 小时文本");
+        var badgePreferredSize = badge.GetPreferredSize(Size.Empty);
+        Equal(true, badge.Width >= badgePreferredSize.Width, "连接徽标实际宽度不得小于完整文本首选宽度");
+
+        AssertMetricCardsFullyVisible(form, "1261×773 客户区的 125% 内容缩放");
+        var sampleCard = FindControls<MetricCard>(form)
+            .Single(card => card.AccessibleName?.StartsWith(UiText.Get("CardSamples"), StringComparison.Ordinal) == true);
+        var sampleCaption = FindControls<Label>(sampleCard)
+            .Single(label => label.Text == UiText.Format("DashboardSamplesCaption", 6, 2));
+        var sampleCaptionRectangle = sampleCard.RectangleToClient(
+            sampleCaption.RectangleToScreen(sampleCaption.ClientRectangle));
+        Equal(true, sampleCard.ClientRectangle.Contains(sampleCaptionRectangle), "有效样本说明不得在卡片右侧被截断");
+        form.Hide();
+    }
+
+    /// <summary>
+    /// 验证高缩放下系列按钮完整容纳末字、选中状态具有实色层级，且首次时间范围为最近 30 天。
+    /// </summary>
+    private static void TestTrendControlsFitHighlightAndDefaultToThirtyDays()
+    {
+        using var form = new ChartForm(new AppSettings(), _ => { });
+        form.ClientSize = new Size(1261, 773);
+        form.UpdateView(CreateDashboardPreviewView(), new RegressionOptions { Mode = RegressionMode.GaussianAggregation });
+        form.Scale(new SizeF(1.25F, 1.25F));
+        form.ClientSize = new Size(1261, 773);
+        form.ShowDashboardTab();
+        Application.DoEvents();
+
+        var timeRange = FindControls<ComboBox>(form)
+            .Single(comboBox => comboBox.Name == "HistoryRangeComboBox");
+        Equal(UiText.Get("TimeRange30Days"), timeRange.Text, "首次打开趋势图应默认显示最近 30 天");
+
+        var visibleSeriesOptions = FindControls<CheckBox>(form)
+            .Where(option => option.Appearance == Appearance.Button && option.Visible)
+            .ToArray();
+        Equal(2, visibleSeriesOptions.Length, "默认应显示基础样本和基础回归两个系列按钮");
+        foreach (var option in visibleSeriesOptions)
+        {
+            var textSize = TextRenderer.MeasureText(
+                option.Text,
+                option.Font,
+                Size.Empty,
+                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+            Equal(
+                true,
+                option.ClientSize.Width >= textSize.Width + option.Padding.Horizontal,
+                $"系列按钮“{option.Text}”必须完整容纳全部文字");
+            Equal(Color.White.ToArgb(), option.ForeColor.ToArgb(), $"选中的“{option.Text}”应使用白色高对比文字");
+            Equal(2, option.FlatAppearance.BorderSize, $"选中的“{option.Text}”应使用 2 像素强调边框");
+            var selectedBackground = option.BackColor;
+
+            option.Checked = false;
+            Application.DoEvents();
+            Equal(
+                false,
+                option.BackColor.ToArgb() == selectedBackground.ToArgb(),
+                $"取消选择“{option.Text}”后背景必须明显变化");
+            Equal(
+                false,
+                option.ForeColor.ToArgb() == Color.White.ToArgb(),
+                $"取消选择“{option.Text}”后文字应弱化");
+            Equal(1, option.FlatAppearance.BorderSize, $"取消选择“{option.Text}”后应恢复 1 像素中性边框");
+            option.Checked = true;
+        }
+
         form.Hide();
     }
 
@@ -263,6 +439,26 @@ internal static class Program
         var officialCurve = Enumerable.Range(0, 24)
             .Select(index => new CurvePoint(timestamp.AddMinutes(index), 2250m + index * 3m))
             .ToArray();
+        var samples = Enumerable.Range(0, 24)
+            .Select(index => new QuotaSample(
+                timestamp.AddMinutes(index),
+                "codex",
+                index + 1,
+                1m,
+                18m + index * 0.03m,
+                1800m + index * 3m,
+                new TokenUsage(120_000 + index * 4_000, 80_000, 0, 12_000, 0),
+                1,
+                "gpt-5.6-sol")
+            {
+                OfficialLongContextIntervalApiEquivalentUsd = 22.5m + index * 0.03m,
+                OfficialLongContextEstimatedWeeklyQuotaUsd = 2250m + index * 3m,
+                PricingVersion = PublicApiPricing.PricingVersion,
+                ServiceTiers = "standard",
+                CreditMultipliers = "1x",
+                SampleSource = HistoricalReplayCalculator.HistoricalSampleSource
+            })
+            .ToArray();
         return new MonitorViewSnapshot(
             timestamp,
             "preview",
@@ -271,12 +467,13 @@ internal static class Program
             24,
             0,
             0,
-            [],
+            samples,
             baseCurve)
         {
             OfficialLongContextEstimatedWeeklyQuotaUsd = 2317.14m,
             OfficialLongContextRegressionCurve = officialCurve,
             ArchivedSampleCount = 6,
+            HistoricalReplayUnattributedUsedPercents = [21m, 22m],
             AppServerConnected = true
         };
     }
@@ -288,7 +485,6 @@ internal static class Program
     private static void CaptureDashboard(string outputPath)
     {
         using var form = new ChartForm(new AppSettings(), _ => { });
-        form.ClientSize = new Size(1160, 730);
         form.UpdateView(CreateDashboardPreviewView(), new RegressionOptions { Mode = RegressionMode.GaussianAggregation });
         form.ShowDashboardTab();
         Application.DoEvents();
@@ -299,7 +495,8 @@ internal static class Program
         Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
         bitmap.Save(absolutePath, System.Drawing.Imaging.ImageFormat.Png);
         form.Hide();
-        Console.WriteLine($"总览预览已写入：{absolutePath}");
+        Console.WriteLine(
+            $"总览预览已写入：{absolutePath}；窗口 DPI={form.DeviceDpi}，尺寸={form.Width}×{form.Height}");
     }
 
     /// <summary>
@@ -447,6 +644,7 @@ internal static class Program
     {
         var settings = new AppSettings
         {
+            EnableOfficialLongContextEstimate = true,
             Regression = new RegressionOptions
             {
                 Mode = RegressionMode.Linear,
@@ -490,17 +688,17 @@ internal static class Program
         using var form = new ChartForm(settings, _ => { });
         form.UpdateView(view, settings.Regression);
         form.ShowChartTab();
-        Equal(DashboardSection.History, form.SelectedSection, "托盘图表入口应直达历史与图表标签页");
+        Equal(DashboardSection.Dashboard, form.SelectedSection, "托盘图表入口应直达合并后的概览与趋势工作台");
 
         var estimate = FindControls<Label>(form)
             .Single(label => label.Name == "RegressionEstimateLabel");
-        Equal(true, estimate.Text.Contains("基础 约 $2,100.00", StringComparison.Ordinal), "图外应显示基础当前回归额度");
-        Equal(true, estimate.Text.Contains("官方 >272K 约 $2,600.00", StringComparison.Ordinal), "图外应显示官方长上下文当前回归额度");
+        Equal(true, estimate.Text.Contains("Standard 约 $2,100.00", StringComparison.Ordinal), "图外应显示 Standard 当前回归额度");
+        Equal(true, estimate.Text.Contains(">272K 约 $2,600.00", StringComparison.Ordinal), "图外应显示官方长上下文当前回归额度");
         var summary = FindControls<Label>(form)
             .Single(label => label.Name == "HistorySummaryLabel");
         Equal(true, summary.Text.Contains("权威已用 18.00%", StringComparison.Ordinal), "图表外应显示当前权威百分比");
-        Equal(true, summary.Text.Contains("最新有效金额点 16.00%", StringComparison.Ordinal), "图表外应区分最新有效金额点");
-        Equal(true, summary.Text.Contains("待归因点 17.00%", StringComparison.Ordinal), "图表外应显示待恢复额度点");
+        Equal(true, summary.Text.Contains("最新有效点 16.00%", StringComparison.Ordinal), "图表外应区分最新有效金额点");
+        Equal(true, summary.Text.Contains("待归因 1", StringComparison.Ordinal), "图表外应显示待恢复额度点数量");
 
         var checkBoxes = FindControls<CheckBox>(form).ToArray();
         Equal(4, checkBoxes.Count(checkBox => checkBox.Text.Contains("样本折线", StringComparison.Ordinal) ||
@@ -519,7 +717,7 @@ internal static class Program
         form.ShowDiagnosticsTab();
         Equal(DashboardSection.Diagnostics, form.SelectedSection, "托盘诊断入口应直达诊断标签页");
         Equal(1, FindControls<ApplicationSidebar>(form).Count(), "主窗口应有唯一科技侧栏");
-        Equal(4, FindControls<SidebarNavigationButton>(form).Count(), "科技侧栏应提供四个一级业务入口");
+        Equal(3, FindControls<SidebarNavigationButton>(form).Count(), "科技侧栏应提供三个一级业务入口");
         form.Hide();
     }
 

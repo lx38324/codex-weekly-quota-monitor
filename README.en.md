@@ -19,23 +19,23 @@ The utility installs to `%LOCALAPPDATA%\CodexWeeklyQuotaMonitor`, registers curr
 
 ## Usage
 
-- Hover the tray icon for estimates, usage, and sample count.
+- Hover the tray icon for the Standard API-equivalent estimate, usage, and sample count.
 - Single-click performs no window action, avoiding conflicts with double-click.
-- Double-click for history, regression curves, and per-sample token data.
-- Right-click to refresh, open quick details/dashboard/settings/diagnostics, or exit.
+- Double-click for the combined overview, history curves, and per-sample token data workspace.
+- Right-click to refresh, open quick details/overview & trends/settings/diagnostics, or exit.
 - Use **Settings → Appearance** for automatic Windows language, Simplified Chinese, English, and system/light/dark themes.
+- Use **Settings → Estimation** to explicitly enable the official `>272K` comparison; it is off by default.
 
 The main window contains:
 
-- **Dashboard** — estimates, used/remaining percentage, reset time, samples, and connection state.
-- **History** — two pricing interpretations, time filters, curves, and token details.
+- **Overview & trends** — quota, used/remaining percentage, reset time, samples, history curves, time filters, and token details.
 - **Settings** — polling, data sources, regression, language, theme, and startup.
 - **Diagnostics** — non-sensitive facts suitable for a GitHub issue.
 
 ## Two estimate interpretations
 
-- **No long-context surcharge** uses public Standard API regular prices.
-- **Official >272K surcharge** applies the published 2× input-class and 1.5× output rule when request input exceeds 272K.
+- **Standard API-equivalent weekly quota (default)** uses public Standard API regular prices.
+- **Official >272K surcharge (optional)** applies the published 2× input-class and 1.5× output rule when request input exceeds 272K, and appears only after explicit opt-in.
 
 Both apply recognized ChatGPT Fast credit multipliers. If an offline or legacy log omits its tier, recovery requires explicit `config.toml` evidence that predates the session and is labeled `(config)`; all other unknown models, tiers, or intervals still fail closed.
 
