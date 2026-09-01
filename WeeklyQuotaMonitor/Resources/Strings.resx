@@ -33,7 +33,7 @@
   <data name="EstimateOfficial" xml:space="preserve"><value>Official &gt;272K surcharge</value></data>
   <data name="WaitingSamples" xml:space="preserve"><value>Waiting for valid samples</value></data>
   <data name="EstimateValue" xml:space="preserve"><value>About ${0:N2}</value></data>
-  <data name="EstimateWithPoints" xml:space="preserve"><value>About ${0:N2} · {1} points</value></data>
+  <data name="EstimateWithPoints" xml:space="preserve"><value>About ${0:N2} · {1} current-estimate contributors</value></data>
   <data name="CurrentEstimateFormat" xml:space="preserve"><value>Current {0}: base {1}; official &gt;272K {2}</value></data>
   <data name="CurrentEstimateBaseFormat" xml:space="preserve"><value>{0} · {1}</value></data>
   <data name="CurrentEstimateDualFormat" xml:space="preserve"><value>{0} · Standard {1} · &gt;272K {2}</value></data>
@@ -47,6 +47,7 @@
   <data name="SeriesBaseRegression" xml:space="preserve"><value>Base regression</value></data>
   <data name="SeriesOfficialSamples" xml:space="preserve"><value>Official long-context samples</value></data>
   <data name="SeriesOfficialRegression" xml:space="preserve"><value>Official long-context regression</value></data>
+  <data name="SeriesCurrentContributions" xml:space="preserve"><value>Current-estimate contributors</value></data>
   <data name="ChartEmpty" xml:space="preserve"><value>No valid amount samples yet</value></data>
   <data name="ChartAxisAmount" xml:space="preserve"><value>Estimated weekly quota (USD)</value></data>
   <data name="TimeRangeAll" xml:space="preserve"><value>All</value></data>
@@ -150,11 +151,12 @@
   <data name="DashboardSamplesCaption" xml:space="preserve"><value>Archived {0} · pending {1}</value></data>
   <data name="DashboardConnectionCaption" xml:space="preserve"><value>Last updated {0:T}</value></data>
   <data name="ConnectionBadgeFormat" xml:space="preserve"><value>{0} · {1:HH:mm:ss}</value></data>
-  <data name="DashboardEstimateCaption" xml:space="preserve"><value>{0} participating points</value></data>
+  <data name="DashboardEstimateCaption" xml:space="preserve"><value>{0} current-estimate contributors</value></data>
   <data name="DashboardStatus" xml:space="preserve"><value>Latest activity</value></data>
   <data name="TimeRangeLabel" xml:space="preserve"><value>Time range</value></data>
   <data name="ChartAxisTime" xml:space="preserve"><value>Sample time</value></data>
   <data name="ChartNoVisibleSeries" xml:space="preserve"><value>No visible data for the selected series and time range.</value></data>
   <data name="ChartHover" xml:space="preserve"><value>{0:g} · {1} · ${2:N2}</value></data>
+  <data name="ChartHoverContribution" xml:space="preserve"><value>{0:g} · {1} · ${2:N2} · current weight {3:P0}</value></data>
   <data name="QuickDetailsStatus" xml:space="preserve"><value>Runtime status: {0}</value></data>
 </root>

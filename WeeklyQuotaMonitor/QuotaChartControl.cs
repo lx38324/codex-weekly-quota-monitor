@@ -23,12 +23,15 @@ public sealed class QuotaChartControl : Control
     private IReadOnlyList<QuotaSample> _samples = [];
     private IReadOnlyList<CurvePoint> _baseCurve = [];
     private IReadOnlyList<CurvePoint> _officialLongContextCurve = [];
+    private IReadOnlyList<RegressionContribution> _currentContributions = [];
     private ChartSeriesVisibility _seriesVisibility = ChartSeriesVisibility.All;
     private readonly ToolTip _toolTip = new();
     private IReadOnlyList<ChartHitTarget> _hitTargets = [];
     private ChartHitTarget? _hoverTarget;
 
     public ChartSeriesVisibility SeriesVisibility => _seriesVisibility;
+
+    public IReadOnlyList<RegressionContribution> CurrentContributions => _currentContributions;
 
     /// <summary>
     /// 启用双缓冲并设置适合金额时间序列的默认外观。
@@ -61,14 +64,17 @@ public sealed class QuotaChartControl : Control
     /// <param name="samples">原始反推样本。</param>
     /// <param name="baseCurve">无长上下文加价口径的回归曲线。</param>
     /// <param name="officialLongContextCurve">官方 >272K 加价口径的回归曲线。</param>
+    /// <param name="currentContributions">基础当前估值实际使用的样本时间与相对权重。</param>
     public void SetData(
         IReadOnlyList<QuotaSample> samples,
         IReadOnlyList<CurvePoint> baseCurve,
-        IReadOnlyList<CurvePoint> officialLongContextCurve)
+        IReadOnlyList<CurvePoint> officialLongContextCurve,
+        IReadOnlyList<RegressionContribution> currentContributions)
     {
         _samples = samples;
         _baseCurve = baseCurve;
         _officialLongContextCurve = officialLongContextCurve;
+        _currentContributions = currentContributions;
         Invalidate();
     }
 
@@ -173,7 +179,7 @@ public sealed class QuotaChartControl : Control
                 maxY,
                 scale,
                 Color.FromArgb(120, 14, 165, 233),
-                Color.FromArgb(14, 165, 233));
+                Color.FromArgb(115, 14, 165, 233));
         }
 
         if (_seriesVisibility.ShowOfficialSamples)
@@ -188,7 +194,7 @@ public sealed class QuotaChartControl : Control
                 maxY,
                 scale,
                 Color.FromArgb(150, 135, 84, 196),
-                Color.FromArgb(121, 67, 171));
+                Color.FromArgb(125, 121, 67, 171));
         }
 
         if (_seriesVisibility.ShowBaseRegression)
@@ -223,6 +229,16 @@ public sealed class QuotaChartControl : Control
                 dashed: true);
         }
 
+        DrawContributionMarkers(
+            e.Graphics,
+            plot,
+            baseRaw,
+            officialLongRaw,
+            minX,
+            maxX,
+            minY,
+            maxY,
+            scale);
         BuildHitTargets(plot, baseRaw, officialLongRaw, minX, maxX, minY, maxY);
         DrawLegend(e.Graphics, plot, scale);
         DrawHover(e.Graphics, plot, scale);
@@ -359,19 +375,97 @@ public sealed class QuotaChartControl : Control
     }
 
     /// <summary>
+    /// 在当前可见原始系列上用琥珀色圆环标明当前估值贡献样本，并以圆环强弱表达高斯相对权重。
+    /// </summary>
+    /// <param name="graphics">当前 WinForms 绘图上下文。</param>
+    /// <param name="plot">可绘制的数据矩形。</param>
+    /// <param name="baseRaw">基础金额原始样本点。</param>
+    /// <param name="officialLongRaw">官方长上下文金额原始样本点。</param>
+    /// <param name="minX">横轴起始时间。</param>
+    /// <param name="maxX">横轴结束时间。</param>
+    /// <param name="minY">纵轴最小金额。</param>
+    /// <param name="maxY">纵轴最大金额。</param>
+    /// <param name="scale">当前窗口 DPI 缩放系数。</param>
+    private void DrawContributionMarkers(
+        Graphics graphics,
+        RectangleF plot,
+        IReadOnlyList<CurvePoint> baseRaw,
+        IReadOnlyList<CurvePoint> officialLongRaw,
+        DateTimeOffset minX,
+        DateTimeOffset maxX,
+        decimal minY,
+        decimal maxY,
+        float scale)
+    {
+        if (_currentContributions.Count == 0 ||
+            (!_seriesVisibility.ShowBaseSamples && !_seriesVisibility.ShowOfficialSamples))
+        {
+            return;
+        }
+
+        var weights = _currentContributions
+            .GroupBy(contribution => contribution.Timestamp)
+            .ToDictionary(
+                group => group.Key,
+                group => Math.Clamp(group.Max(contribution => contribution.RelativeWeight), 0, 1));
+        using var ringPen = new Pen(Color.FromArgb(220, 245, 158, 11), 2F * scale);
+        using var centerBrush = new SolidBrush(Color.FromArgb(150, 245, 158, 11));
+        var visibleSeries = new List<CurvePoint>();
+        if (_seriesVisibility.ShowBaseSamples)
+        {
+            visibleSeries.AddRange(baseRaw);
+        }
+
+        if (_seriesVisibility.ShowOfficialSamples)
+        {
+            visibleSeries.AddRange(officialLongRaw);
+        }
+
+        foreach (var point in visibleSeries)
+        {
+            if (!weights.TryGetValue(point.Timestamp, out var relativeWeight))
+            {
+                continue;
+            }
+
+            var screenPoint = Map(point, plot, minX, maxX, minY, maxY);
+            var radius = (4.5F + 3F * MathF.Sqrt((float)relativeWeight)) * scale;
+            var alpha = (int)Math.Round(65 + 190 * relativeWeight);
+            ringPen.Color = Color.FromArgb(alpha, 245, 158, 11);
+            ringPen.Width = (1.2F + 1.2F * (float)relativeWeight) * scale;
+            centerBrush.Color = Color.FromArgb(Math.Max(35, alpha / 2), 245, 158, 11);
+            graphics.FillEllipse(
+                centerBrush,
+                screenPoint.X - 2F * scale,
+                screenPoint.Y - 2F * scale,
+                4F * scale,
+                4F * scale);
+            graphics.DrawEllipse(
+                ringPen,
+                screenPoint.X - radius,
+                screenPoint.Y - radius,
+                radius * 2,
+                radius * 2);
+        }
+    }
+
+    /// <summary>
     /// 绘制基础口径与官方长上下文口径的样本和回归图例。
     /// </summary>
     private void DrawLegend(Graphics graphics, RectangleF plot, float scale)
     {
-        var entries = new List<(string Label, Color Color, bool IsRegression)>();
+        var entries = new List<(string Label, Color Color, bool IsRegression, bool IsContribution)>();
         if (_seriesVisibility.ShowBaseSamples)
-            entries.Add((UiText.Get("SeriesBaseSamples"), Color.FromArgb(14, 165, 233), false));
+            entries.Add((UiText.Get("SeriesBaseSamples"), Color.FromArgb(14, 165, 233), false, false));
         if (_seriesVisibility.ShowBaseRegression)
-            entries.Add((UiText.Get("SeriesBaseRegression"), Color.FromArgb(15, 135, 210), true));
+            entries.Add((UiText.Get("SeriesBaseRegression"), Color.FromArgb(15, 135, 210), true, false));
         if (_seriesVisibility.ShowOfficialSamples)
-            entries.Add((UiText.Get("SeriesOfficialSamples"), Color.FromArgb(121, 67, 171), false));
+            entries.Add((UiText.Get("SeriesOfficialSamples"), Color.FromArgb(121, 67, 171), false, false));
         if (_seriesVisibility.ShowOfficialRegression)
-            entries.Add((UiText.Get("SeriesOfficialRegression"), Color.FromArgb(139, 92, 246), true));
+            entries.Add((UiText.Get("SeriesOfficialRegression"), Color.FromArgb(139, 92, 246), true, false));
+        if (_currentContributions.Count > 0 &&
+            (_seriesVisibility.ShowBaseSamples || _seriesVisibility.ShowOfficialSamples))
+            entries.Add((UiText.Get("SeriesCurrentContributions"), Color.FromArgb(245, 158, 11), false, true));
 
         using var textBrush = new SolidBrush(AppTheme.Current.Text);
         var startX = Math.Max(plot.Left + 8 * scale, plot.Right - 440 * scale);
@@ -380,7 +474,13 @@ public sealed class QuotaChartControl : Control
             var entry = entries[index];
             var x = startX + index % 2 * 220 * scale;
             var y = plot.Top + 9 * scale + index / 2 * 23 * scale;
-            if (entry.IsRegression)
+            if (entry.IsContribution)
+            {
+                using var ringPen = new Pen(entry.Color, 2F * scale);
+                graphics.DrawEllipse(ringPen, x, y - 5 * scale, 10 * scale, 10 * scale);
+                graphics.DrawString(entry.Label, Font, textBrush, x + 16 * scale, y - 9 * scale);
+            }
+            else if (entry.IsRegression)
             {
                 using var pen = new Pen(entry.Color, 3F * scale)
                 {
@@ -411,12 +511,18 @@ public sealed class QuotaChartControl : Control
         decimal maxY)
     {
         var targets = new List<ChartHitTarget>();
+        var weights = _currentContributions
+            .GroupBy(contribution => contribution.Timestamp)
+            .ToDictionary(
+                group => group.Key,
+                group => Math.Clamp(group.Max(contribution => contribution.RelativeWeight), 0, 1));
         if (_seriesVisibility.ShowBaseSamples)
         {
             targets.AddRange(baseRaw.Select(point => new ChartHitTarget(
                 Map(point, plot, minX, maxX, minY, maxY),
                 point,
-                UiText.Get("SeriesBaseSamples"))));
+                UiText.Get("SeriesBaseSamples"),
+                weights.TryGetValue(point.Timestamp, out var weight) ? weight : null)));
         }
 
         if (_seriesVisibility.ShowOfficialSamples)
@@ -424,7 +530,8 @@ public sealed class QuotaChartControl : Control
             targets.AddRange(officialLongRaw.Select(point => new ChartHitTarget(
                 Map(point, plot, minX, maxX, minY, maxY),
                 point,
-                UiText.Get("SeriesOfficialSamples"))));
+                UiText.Get("SeriesOfficialSamples"),
+                weights.TryGetValue(point.Timestamp, out var weight) ? weight : null)));
         }
 
         _hitTargets = targets;
@@ -482,11 +589,18 @@ public sealed class QuotaChartControl : Control
             this,
             nearest is null
                 ? null
-                : UiText.Format(
-                    "ChartHover",
-                    nearest.Point.Timestamp.LocalDateTime,
-                    nearest.Series,
-                    nearest.Point.Value));
+                : nearest.ContributionWeight is double weight
+                    ? UiText.Format(
+                        "ChartHoverContribution",
+                        nearest.Point.Timestamp.LocalDateTime,
+                        nearest.Series,
+                        nearest.Point.Value,
+                        weight)
+                    : UiText.Format(
+                        "ChartHover",
+                        nearest.Point.Timestamp.LocalDateTime,
+                        nearest.Series,
+                        nearest.Point.Value));
         Invalidate();
     }
 
@@ -518,7 +632,11 @@ public sealed class QuotaChartControl : Control
     }
 
     /// <summary>
-    /// 保存一个可见样本在屏幕上的命中位置及其业务系列名称。
+    /// 保存一个可见样本在屏幕上的命中位置、业务系列名称和可选贡献权重。
     /// </summary>
-    private sealed record ChartHitTarget(PointF ScreenPoint, CurvePoint Point, string Series);
+    private sealed record ChartHitTarget(
+        PointF ScreenPoint,
+        CurvePoint Point,
+        string Series,
+        double? ContributionWeight);
 }

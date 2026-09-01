@@ -450,10 +450,6 @@ public sealed class ChartForm : Form
         var used = view.RateLimit?.UsedPercent;
         decimal? remaining = used is decimal usedValue ? 100m - usedValue : null;
         var pendingCount = view.HistoricalReplayUnattributedUsedPercents.Count;
-        _baseEstimateCard.SetContent(
-            UiText.Get("EstimateBase"),
-            EstimateValue(view.EstimatedWeeklyQuotaUsd),
-            UiText.Format("DashboardEstimateCaption", view.RegressionCurve.Count));
         _usedCard.SetContent(
             UiText.Get("CardUsed"),
             PercentValue(used),
@@ -494,16 +490,18 @@ public sealed class ChartForm : Form
             _ => throw new InvalidOperationException($"不支持的历史时间范围：{selected.Range}。")
         };
         var samples = _view.Samples.Where(sample => sample.Timestamp >= cutoff).ToArray();
-        var baseCurve = _view.RegressionCurve.Where(point => point.Timestamp >= cutoff).ToArray();
-        var officialCurve = _settings.EnableOfficialLongContextEstimate
-            ? _view.OfficialLongContextRegressionCurve
-                .Where(point => point.Timestamp >= cutoff)
-                .ToArray()
-            : [];
+        var baseAnalysis = RegressionCalculator.Analyze(samples, _settings.Regression);
+        var officialAnalysis = _settings.EnableOfficialLongContextEstimate
+            ? RegressionCalculator.AnalyzeOfficialLongContext(samples, _settings.Regression)
+            : new RegressionAnalysis([], []);
+        _baseEstimateCard.SetContent(
+            UiText.Get("EstimateBase"),
+            EstimateValue(baseAnalysis.CurrentEstimate),
+            UiText.Format("DashboardEstimateCaption", baseAnalysis.CurrentContributions.Count));
 
         var baseEstimate = RegressionEstimateText(
-            baseCurve.LastOrDefault()?.Value,
-            baseCurve.Length,
+            baseAnalysis.CurrentEstimate,
+            baseAnalysis.CurrentContributions.Count,
             samples.Length);
         _regressionEstimate.Text = _settings.EnableOfficialLongContextEstimate
             ? UiText.Format(
@@ -511,8 +509,8 @@ public sealed class ChartForm : Form
                 ModeName(_settings.Regression.Mode),
                 baseEstimate,
                 RegressionEstimateText(
-                    officialCurve.LastOrDefault()?.Value,
-                    officialCurve.Length,
+                    officialAnalysis.CurrentEstimate,
+                    officialAnalysis.CurrentContributions.Count,
                     samples.Length))
             : UiText.Format(
                 "CurrentEstimateBaseFormat",
@@ -521,8 +519,8 @@ public sealed class ChartForm : Form
         _regressionEstimate.ForeColor = AppTheme.Current.Accent;
 
         var filterHint = samples.Length > 0 &&
-                         (baseCurve.Length == 0 ||
-                          (_settings.EnableOfficialLongContextEstimate && officialCurve.Length == 0))
+                          (baseAnalysis.Curve.Count == 0 ||
+                           (_settings.EnableOfficialLongContextEstimate && officialAnalysis.Curve.Count == 0))
             ? UiText.Get("FilterHint")
             : string.Empty;
         var authoritative = _view.RateLimit is null
@@ -539,7 +537,11 @@ public sealed class ChartForm : Form
             filterHint);
         _summary.ForeColor = AppTheme.Current.MutedText;
 
-        _chart.SetData(samples, baseCurve, officialCurve);
+        _chart.SetData(
+            samples,
+            baseAnalysis.Curve,
+            officialAnalysis.Curve,
+            baseAnalysis.CurrentContributions);
         _grid.DataSource = samples
             .OrderByDescending(sample => sample.Timestamp)
             .Select(sample => new SampleGridRow(
@@ -741,12 +743,16 @@ public sealed class ChartForm : Form
         percent is decimal value ? $"{value.ToString("N2", UiText.Culture)}%" : "--";
 
     /// <summary>
-    /// 将回归值和参与点数转换为窗口顶部的明确额度文本。
+    /// 将回归值和当前估值贡献样本数转换为窗口顶部的明确额度文本。
     /// </summary>
-    private static string RegressionEstimateText(decimal? estimate, int acceptedPoints, int totalPoints) =>
+    /// <param name="estimate">所选时间范围重新计算后的当前估值。</param>
+    /// <param name="contributionCount">当前估值实际使用的有效样本数。</param>
+    /// <param name="totalPoints">所选时间范围内尚未经过金额上限过滤的样本总数。</param>
+    /// <returns>包含金额和贡献样本数，或等待原因计数的区域化文本。</returns>
+    private static string RegressionEstimateText(decimal? estimate, int contributionCount, int totalPoints) =>
         estimate is decimal value
-            ? UiText.Format("EstimateWithPoints", value, acceptedPoints)
-            : $"{UiText.Get("WaitingSamples")} ({acceptedPoints}/{totalPoints})";
+            ? UiText.Format("EstimateWithPoints", value, contributionCount)
+            : $"{UiText.Get("WaitingSamples")} ({contributionCount}/{totalPoints})";
 
     /// <summary>
     /// 将回归枚举转换为当前界面语言的名称。

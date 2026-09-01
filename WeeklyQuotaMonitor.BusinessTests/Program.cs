@@ -61,6 +61,7 @@ internal static class Program
             TestBucketSwitchClearsPending,
             TestMalformedIntervalIsRejected,
             TestRegressionExcludesLegacyPricing,
+            TestRegressionContributionScopes,
             TestRolloutPriorityResponseAssociation,
             TestIntermediateEventsPreserveResponseAssociation,
             TestTokenHeartbeatPreservesResponseAssociation,
@@ -90,7 +91,8 @@ internal static class Program
             TestDetailWindowCanReopenFromMenuAfterUserClose,
             TestChartGridUsesLocalSampleTime,
             TestLegacyRegressionLimitMigrationRestoresCurve,
-            TestDashboardTabsSeriesAndEstimate
+            TestDashboardTabsSeriesAndEstimate,
+            TestDashboardRangeUsesOneContributionScope
         };
 
         foreach (var test in tests)
@@ -451,8 +453,10 @@ internal static class Program
                 1,
                 "gpt-5.6-sol")
             {
+                AmountDefinition = PublicApiPricing.AmountDefinition,
                 OfficialLongContextIntervalApiEquivalentUsd = 22.5m + index * 0.03m,
                 OfficialLongContextEstimatedWeeklyQuotaUsd = 2250m + index * 3m,
+                OfficialLongContextAmountDefinition = PublicApiPricing.OfficialLongContextAmountDefinition,
                 PricingVersion = PublicApiPricing.PricingVersion,
                 ServiceTiers = "standard",
                 CreditMultipliers = "1x",
@@ -663,8 +667,10 @@ internal static class Program
             1,
             "gpt-5.6-sol")
         {
+            AmountDefinition = PublicApiPricing.AmountDefinition,
             OfficialLongContextIntervalApiEquivalentUsd = 26m,
             OfficialLongContextEstimatedWeeklyQuotaUsd = 2600m,
+            OfficialLongContextAmountDefinition = PublicApiPricing.OfficialLongContextAmountDefinition,
             PricingVersion = PublicApiPricing.PricingVersion,
             ServiceTiers = "standard",
             CreditMultipliers = "1x"
@@ -719,6 +725,100 @@ internal static class Program
         Equal(1, FindControls<ApplicationSidebar>(form).Count(), "主窗口应有唯一科技侧栏");
         Equal(3, FindControls<SidebarNavigationButton>(form).Count(), "科技侧栏应提供三个一级业务入口");
         form.Hide();
+    }
+
+    /// <summary>
+    /// 验证默认 30 天和全部时间会分别重算同一份估值、贡献计数与曲线高亮，并保持卡片和横幅口径一致。
+    /// </summary>
+    private static void TestDashboardRangeUsesOneContributionScope()
+    {
+        var now = DateTimeOffset.Now;
+        var oldSamples = Enumerable.Range(0, 10)
+            .Select(index => CurrentSample(now.AddDays(-60 + index), 500m + index * 10m));
+        var recentSamples = Enumerable.Range(0, 21)
+            .Select(index => CurrentSample(now.AddDays(-20 + index), 2000m + index * 10m))
+            .ToArray();
+        var allSamples = oldSamples.Concat(recentSamples).ToArray();
+        var options = new RegressionOptions
+        {
+            Mode = RegressionMode.Linear,
+            LinearLookbackPoints = 100,
+            MaximumSampleUsd = AppSettingsMigration.DefaultMaximumSampleUsd
+        };
+        var allAnalysis = RegressionCalculator.Analyze(allSamples, options);
+        var recentAnalysis = RegressionCalculator.Analyze(recentSamples, options);
+        var view = new MonitorViewSnapshot(
+            now,
+            "测试",
+            new RateLimitSnapshot(now, "codex", "Codex", 8m, 10080, now.AddDays(7)),
+            allAnalysis.CurrentEstimate,
+            allSamples.Length,
+            0,
+            0,
+            allSamples,
+            allAnalysis.Curve);
+        var settings = new AppSettings { Regression = options };
+
+        using var form = new ChartForm(settings, _ => { });
+        form.UpdateView(view, options);
+        var estimateCard = FindControls<MetricCard>(form)
+            .Single(card => card.Tone == MetricCardTone.Primary && card.Style == MetricCardStyle.Hero);
+        var estimateLabel = FindControls<Label>(form)
+            .Single(label => label.Name == "RegressionEstimateLabel");
+        var chart = FindControls<QuotaChartControl>(form).Single();
+        Equal(21, chart.CurrentContributions.Count, "默认 30 天图表应接收 21 个贡献样本");
+        Equal(
+            true,
+            estimateCard.AccessibleName!.Contains(UiText.Format("DashboardEstimateCaption", 21), StringComparison.Ordinal),
+            "默认 30 天额度卡应显示 21 个当前估值贡献样本");
+        Equal(
+            true,
+            estimateLabel.Text.Contains(
+                UiText.Format("EstimateWithPoints", recentAnalysis.CurrentEstimate!.Value, 21),
+                StringComparison.Ordinal),
+            "默认 30 天横幅应显示同一金额和 21 个贡献样本");
+
+        using (var renderedChart = new QuotaChartControl { Size = new Size(900, 360) })
+        using (var bitmap = new Bitmap(renderedChart.Size.Width, renderedChart.Size.Height))
+        {
+            renderedChart.SetSeriesVisibility(new(true, true, false, false));
+            renderedChart.SetData(recentSamples, recentAnalysis.Curve, [], recentAnalysis.CurrentContributions);
+            renderedChart.CreateControl();
+            renderedChart.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+            var amberPixels = 0;
+            for (var y = 0; y < bitmap.Height; y++)
+            {
+                for (var x = 0; x < bitmap.Width; x++)
+                {
+                    var pixel = bitmap.GetPixel(x, y);
+                    if (pixel.R > 170 && pixel.G > 75 && pixel.G < 220 && pixel.B < 130 &&
+                        pixel.R > pixel.G + 20 && pixel.G > pixel.B + 20)
+                    {
+                        amberPixels++;
+                    }
+                }
+            }
+
+            Equal(true, amberPixels > 20, "图表应以琥珀色圆环标出当前估值贡献样本");
+        }
+
+        var range = FindControls<ComboBox>(form)
+            .Single(comboBox => comboBox.Name == "HistoryRangeComboBox");
+        range.SelectedIndex = 0;
+        Equal(allSamples.Length, chart.CurrentContributions.Count, "切换全部后图表贡献样本数应同步扩大");
+        Equal(
+            true,
+            estimateCard.AccessibleName!.Contains(
+                UiText.Format("DashboardEstimateCaption", allSamples.Length),
+                StringComparison.Ordinal),
+            "切换全部后额度卡贡献计数应同步更新");
+        Equal(
+            true,
+            estimateLabel.Text.Contains(
+                UiText.Format("EstimateWithPoints", allAnalysis.CurrentEstimate!.Value, allSamples.Length),
+                StringComparison.Ordinal),
+            "切换全部后横幅应显示同一全历史金额和贡献计数");
+        Equal(false, recentAnalysis.CurrentEstimate == allAnalysis.CurrentEstimate, "切换时间范围必须重新计算金额而非裁切旧曲线");
     }
 
     /// <summary>
@@ -1169,6 +1269,54 @@ internal static class Program
         Near(42m, curve[0].Value, 0.000001m, "旧口径样本不得影响当前估计");
         Equal(1, officialLongCurve.Count, "官方长上下文回归只能使用当前双口径样本");
         Near(42m, officialLongCurve[0].Value, 0.000001m, "官方长上下文回归不得混入旧口径样本");
+    }
+
+    /// <summary>
+    /// 验证三种算法会返回各自真正用于当前估值的样本范围，高斯模式同时保留递增的相对权重。
+    /// </summary>
+    private static void TestRegressionContributionScopes()
+    {
+        var start = DateTimeOffset.Now.AddHours(-5);
+        var samples = Enumerable.Range(0, 6)
+            .Select(index => CurrentSample(start.AddHours(index), 100m + index * 10m))
+            .ToArray();
+
+        var linear = RegressionCalculator.Analyze(
+            samples,
+            new RegressionOptions
+            {
+                Mode = RegressionMode.Linear,
+                LinearLookbackPoints = 3
+            });
+        Equal(3, linear.CurrentContributions.Count, "线性当前估值只应使用最后 N 个样本");
+        Equal(samples[3].Timestamp, linear.CurrentContributions[0].Timestamp, "线性贡献范围起点");
+        Equal(true, linear.CurrentContributions.All(point => point.RelativeWeight == 1), "线性贡献样本应统一高亮");
+
+        var segmented = RegressionCalculator.Analyze(
+            samples,
+            new RegressionOptions
+            {
+                Mode = RegressionMode.TimeWindowSegmented,
+                SegmentWindowHours = 2.1
+            });
+        Equal(3, segmented.CurrentContributions.Count, "分段当前估值只应使用最后时间窗口内样本");
+        Equal(samples[3].Timestamp, segmented.CurrentContributions[0].Timestamp, "分段贡献范围起点");
+
+        var gaussian = RegressionCalculator.Analyze(
+            samples,
+            new RegressionOptions
+            {
+                Mode = RegressionMode.GaussianAggregation,
+                GaussianBandwidthHours = 2
+            });
+        Equal(samples.Length, gaussian.CurrentContributions.Count, "高斯当前估值应返回全部有效样本");
+        Near(1m, (decimal)gaussian.CurrentContributions[^1].RelativeWeight, 0.000001m, "最新高斯样本权重");
+        Equal(
+            true,
+            gaussian.CurrentContributions
+                .Zip(gaussian.CurrentContributions.Skip(1), (left, right) => left.RelativeWeight < right.RelativeWeight)
+                .All(increases => increases),
+            "越接近当前时刻的高斯样本权重应越大");
     }
 
     /// <summary>
@@ -1781,18 +1929,35 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证历史重放合入状态可重复执行，替换同百分比当前点但保留旧价格归档样本。
+    /// 验证当前周重放可重复合入：替换成功覆盖区间，刷新旧重放点，并保留未覆盖实时样本和旧价格归档样本。
     /// </summary>
     private static void TestHistoricalReplayApplyIsIdempotent()
     {
         var timestamp = DateTimeOffset.Now;
-        var oldCurrent = CurrentSample(timestamp, 900m);
+        var coveredLive = CurrentSample(timestamp, 900m) with
+        {
+            UsedPercent = 18m,
+            DeltaPercent = 1m
+        };
+        var uncoveredLive = CurrentSample(timestamp.AddMinutes(30), 1200m) with
+        {
+            UsedPercent = 25m,
+            DeltaPercent = 1m
+        };
+        var staleReplay = CurrentSample(timestamp.AddMinutes(-30), 700m) with
+        {
+            UsedPercent = 17m,
+            DeltaPercent = 1m,
+            SampleSource = HistoricalReplayCalculator.HistoricalSampleSource
+        };
         var archived = LegacySample(timestamp.AddMinutes(-1), 700m);
         var replayed = CurrentSample(timestamp, 42m) with
         {
+            UsedPercent = 18m,
+            DeltaPercent = 1m,
             SampleSource = HistoricalReplayCalculator.HistoricalSampleSource
         };
-        var state = new MonitorState { Samples = [archived, oldCurrent] };
+        var state = new MonitorState { Samples = [archived, staleReplay, coveredLive, uncoveredLive] };
         var result = new HistoricalReplayResult(
             timestamp.AddHours(-1),
             timestamp.AddHours(1),
@@ -1811,9 +1976,16 @@ internal static class Program
 
         HistoricalReplayCalculator.ApplyToState(state, result);
         HistoricalReplayCalculator.ApplyToState(state, result);
-        Equal(2, state.Samples.Count, "重复合入后应保留一个归档点和一个重放点");
-        Equal(1, state.Samples.Count(PublicApiPricing.IsCurrentSample), "当前价格版本不得产生重复样本");
-        Near(42m, state.Samples.Single(PublicApiPricing.IsCurrentSample).EstimatedWeeklyQuotaUsd, 0.000001m, "重放点应替换旧当前点");
+        Equal(3, state.Samples.Count, "重复合入后应保留归档点、重建点和未覆盖实时点");
+        Equal(2, state.Samples.Count(PublicApiPricing.IsCurrentSample), "当前价格版本应保留一个重建点和一个未覆盖实时点");
+        Equal(true, state.Samples.Contains(uncoveredLive), "历史无法重建的 25% 实时样本不得被删除");
+        Equal(false, state.Samples.Contains(coveredLive), "18% 成功重建区间应替换原实时样本");
+        Equal(false, state.Samples.Contains(staleReplay), "旧重放点应由本轮结果刷新");
+        Near(
+            42m,
+            state.Samples.Single(sample => sample.UsedPercent == 18m).EstimatedWeeklyQuotaUsd,
+            0.000001m,
+            "重建点应替换成功覆盖区间的旧当前点");
         Equal(HistoricalReplayCalculator.CurrentReplayVersion, state.HistoricalReplayVersion, "历史重放版本应持久化");
         Equal(false, HistoricalReplayCalculator.IsReplayRequired(state), "相同重放和价格版本不应再次扫描");
     }

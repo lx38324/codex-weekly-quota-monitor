@@ -1,6 +1,28 @@
 namespace WeeklyQuotaMonitor.Core;
 
 /// <summary>
+/// 表示一个有效样本对当前时刻估值的相对贡献；1 表示当前算法中的最大贡献强度。
+/// </summary>
+/// <param name="Timestamp">参与估值的样本时间。</param>
+/// <param name="RelativeWeight">归一化到 0 到 1 的相对贡献强度。</param>
+public sealed record RegressionContribution(DateTimeOffset Timestamp, double RelativeWeight);
+
+/// <summary>
+/// 保存同一次回归计算产生的完整曲线和当前估值贡献样本，供金额、计数和图表统一使用。
+/// </summary>
+/// <param name="Curve">按有效样本时间输出的回归或聚合曲线。</param>
+/// <param name="CurrentContributions">当前估值实际使用的样本及相对贡献强度。</param>
+public sealed record RegressionAnalysis(
+    IReadOnlyList<CurvePoint> Curve,
+    IReadOnlyList<RegressionContribution> CurrentContributions)
+{
+    /// <summary>
+    /// 返回曲线最后一个时刻的当前估值；没有有效曲线点时返回 null。
+    /// </summary>
+    public decimal? CurrentEstimate => Curve.Count == 0 ? null : Curve[^1].Value;
+}
+
+/// <summary>
 /// 根据有效反推样本生成线性、时间窗口分段或高斯聚合曲线。
 /// </summary>
 public static class RegressionCalculator
@@ -14,7 +36,18 @@ public static class RegressionCalculator
     public static IReadOnlyList<CurvePoint> BuildCurve(
         IReadOnlyList<QuotaSample> samples,
         RegressionOptions options) =>
-        BuildCurve(samples, options, sample => sample.EstimatedWeeklyQuotaUsd);
+        Analyze(samples, options).Curve;
+
+    /// <summary>
+    /// 按基础 Standard API 等价金额生成曲线，并返回当前估值真正使用的样本及权重。
+    /// </summary>
+    /// <param name="samples">原始周额度反推样本。</param>
+    /// <param name="options">回归模式和窗口参数。</param>
+    /// <returns>基础金额曲线、当前估值和贡献样本组成的统一分析结果。</returns>
+    public static RegressionAnalysis Analyze(
+        IReadOnlyList<QuotaSample> samples,
+        RegressionOptions options) =>
+        Analyze(samples, options, sample => sample.EstimatedWeeklyQuotaUsd);
 
     /// <summary>
     /// 使用官方 >272K 长上下文加价金额生成独立回归曲线。
@@ -25,7 +58,18 @@ public static class RegressionCalculator
     public static IReadOnlyList<CurvePoint> BuildOfficialLongContextCurve(
         IReadOnlyList<QuotaSample> samples,
         RegressionOptions options) =>
-        BuildCurve(samples, options, sample => sample.OfficialLongContextEstimatedWeeklyQuotaUsd);
+        AnalyzeOfficialLongContext(samples, options).Curve;
+
+    /// <summary>
+    /// 按官方长上下文加价金额生成曲线，并返回当前估值真正使用的样本及权重。
+    /// </summary>
+    /// <param name="samples">包含两套金额的原始周额度反推样本。</param>
+    /// <param name="options">回归模式和窗口参数。</param>
+    /// <returns>官方长上下文金额曲线、当前估值和贡献样本组成的统一分析结果。</returns>
+    public static RegressionAnalysis AnalyzeOfficialLongContext(
+        IReadOnlyList<QuotaSample> samples,
+        RegressionOptions options) =>
+        Analyze(samples, options, sample => sample.OfficialLongContextEstimatedWeeklyQuotaUsd);
 
     /// <summary>
     /// 按指定金额选择器过滤当前版本样本并执行配置的回归或聚合算法。
@@ -33,8 +77,8 @@ public static class RegressionCalculator
     /// <param name="samples">原始周额度反推样本。</param>
     /// <param name="options">回归模式和窗口参数。</param>
     /// <param name="valueSelector">从单个样本读取目标口径周额度金额的函数。</param>
-    /// <returns>按时间升序排列的目标口径曲线坐标。</returns>
-    private static IReadOnlyList<CurvePoint> BuildCurve(
+    /// <returns>目标金额口径的曲线和当前估值贡献样本。</returns>
+    private static RegressionAnalysis Analyze(
         IReadOnlyList<QuotaSample> samples,
         RegressionOptions options,
         Func<QuotaSample, decimal> valueSelector)
@@ -49,14 +93,45 @@ public static class RegressionCalculator
 
         if (points.Length == 0)
         {
-            return [];
+            return new([], []);
         }
 
-        return options.Mode switch
+        var curve = options.Mode switch
         {
             RegressionMode.Linear => BuildLinear(points, options.LinearLookbackPoints),
             RegressionMode.TimeWindowSegmented => BuildSegmented(points, options.SegmentWindowHours),
             RegressionMode.GaussianAggregation => BuildGaussian(points, options.GaussianBandwidthHours),
+            _ => throw new InvalidOperationException($"未知回归模式：{options.Mode}")
+        };
+        return new(curve, BuildCurrentContributions(points, options));
+    }
+
+    /// <summary>
+    /// 按当前算法提取最后一个估值时刻使用的样本，并为高斯模式计算归一化相对权重。
+    /// </summary>
+    /// <param name="points">已通过价格版本、金额和上限过滤的时间金额点。</param>
+    /// <param name="options">决定贡献范围和权重的回归参数。</param>
+    /// <returns>按样本时间升序排列的当前估值贡献列表。</returns>
+    private static IReadOnlyList<RegressionContribution> BuildCurrentContributions(
+        CurvePoint[] points,
+        RegressionOptions options)
+    {
+        return options.Mode switch
+        {
+            RegressionMode.Linear => points[^Math.Clamp(options.LinearLookbackPoints, 1, points.Length)..]
+                .Select(point => new RegressionContribution(point.Timestamp, 1))
+                .ToArray(),
+            RegressionMode.TimeWindowSegmented => points
+                .Where(point => point.Timestamp >= points[^1].Timestamp.AddHours(-options.SegmentWindowHours))
+                .Select(point => new RegressionContribution(point.Timestamp, 1))
+                .ToArray(),
+            RegressionMode.GaussianAggregation => points
+                .Select(point =>
+                {
+                    var distance = HoursBetween(points[^1].Timestamp, point.Timestamp) / options.GaussianBandwidthHours;
+                    return new RegressionContribution(point.Timestamp, Math.Exp(-0.5 * distance * distance));
+                })
+                .ToArray(),
             _ => throw new InvalidOperationException($"未知回归模式：{options.Mode}")
         };
     }

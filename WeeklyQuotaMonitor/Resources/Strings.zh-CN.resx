@@ -33,7 +33,7 @@
   <data name="EstimateOfficial" xml:space="preserve"><value>官方 &gt;272K 加价</value></data>
   <data name="WaitingSamples" xml:space="preserve"><value>等待有效样本</value></data>
   <data name="EstimateValue" xml:space="preserve"><value>约 ${0:N2}</value></data>
-  <data name="EstimateWithPoints" xml:space="preserve"><value>约 ${0:N2} · {1} 个点</value></data>
+  <data name="EstimateWithPoints" xml:space="preserve"><value>约 ${0:N2} · {1} 个当前估值贡献样本</value></data>
   <data name="CurrentEstimateFormat" xml:space="preserve"><value>当前{0}：基础 {1}；官方 &gt;272K {2}</value></data>
   <data name="CurrentEstimateBaseFormat" xml:space="preserve"><value>{0} · {1}</value></data>
   <data name="CurrentEstimateDualFormat" xml:space="preserve"><value>{0} · Standard {1} · &gt;272K {2}</value></data>
@@ -47,6 +47,7 @@
   <data name="SeriesBaseRegression" xml:space="preserve"><value>基础回归曲线</value></data>
   <data name="SeriesOfficialSamples" xml:space="preserve"><value>官方长样本折线</value></data>
   <data name="SeriesOfficialRegression" xml:space="preserve"><value>官方长回归曲线</value></data>
+  <data name="SeriesCurrentContributions" xml:space="preserve"><value>当前估值贡献</value></data>
   <data name="ChartEmpty" xml:space="preserve"><value>尚无有效金额样本</value></data>
   <data name="ChartAxisAmount" xml:space="preserve"><value>预估周额度（USD）</value></data>
   <data name="TimeRangeAll" xml:space="preserve"><value>全部</value></data>
@@ -150,11 +151,12 @@
   <data name="DashboardSamplesCaption" xml:space="preserve"><value>归档 {0} · 待归因 {1}</value></data>
   <data name="DashboardConnectionCaption" xml:space="preserve"><value>最近更新 {0:T}</value></data>
   <data name="ConnectionBadgeFormat" xml:space="preserve"><value>{0} · {1:HH:mm:ss}</value></data>
-  <data name="DashboardEstimateCaption" xml:space="preserve"><value>{0} 个参与计算点</value></data>
+  <data name="DashboardEstimateCaption" xml:space="preserve"><value>{0} 个当前估值贡献样本</value></data>
   <data name="DashboardStatus" xml:space="preserve"><value>最近活动</value></data>
   <data name="TimeRangeLabel" xml:space="preserve"><value>时间范围</value></data>
   <data name="ChartAxisTime" xml:space="preserve"><value>采样时间</value></data>
   <data name="ChartNoVisibleSeries" xml:space="preserve"><value>当前系列与时间范围内没有可显示的数据。</value></data>
   <data name="ChartHover" xml:space="preserve"><value>{0:g} · {1} · ${2:N2}</value></data>
+  <data name="ChartHoverContribution" xml:space="preserve"><value>{0:g} · {1} · ${2:N2} · 当前估值权重 {3:P0}</value></data>
   <data name="QuickDetailsStatus" xml:space="preserve"><value>运行状态：{0}</value></data>
 </root>
