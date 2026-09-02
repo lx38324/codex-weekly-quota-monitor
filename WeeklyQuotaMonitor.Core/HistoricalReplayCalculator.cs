@@ -7,7 +7,7 @@ namespace WeeklyQuotaMonitor.Core;
 /// </summary>
 public static class HistoricalReplayCalculator
 {
-    public const int CurrentReplayVersion = 5;
+    public const int CurrentReplayVersion = 6;
     public const string HistoricalSampleSource = "historical-replay";
     private static readonly TimeSpan ResetClusterTolerance = TimeSpan.FromMinutes(1);
 
@@ -130,7 +130,7 @@ public static class HistoricalReplayCalculator
     }
 
     /// <summary>
-    /// 将重放结果幂等合入监控状态；刷新旧重放点，并仅替换被成功重建区间覆盖的实时样本。
+    /// 将重放结果幂等合入监控状态；仅替换被成功重建区间覆盖的当前价格样本，保留无法重建区间的既有样本。
     /// </summary>
     /// <param name="state">需要更新并持久化的监控状态。</param>
     /// <param name="result">已完成的历史重放结果。</param>
@@ -148,10 +148,9 @@ public static class HistoricalReplayCalculator
             string.Equals(sample.LimitId, result.LimitId, StringComparison.Ordinal) &&
             sample.Timestamp >= result.WindowStart &&
             sample.Timestamp <= result.WindowEnd &&
-            (string.Equals(sample.SampleSource, HistoricalSampleSource, StringComparison.Ordinal) ||
-             replayedIntervals.Any(interval =>
-                 sample.UsedPercent > interval.StartUsedPercent &&
-                 sample.UsedPercent <= interval.EndUsedPercent)));
+            replayedIntervals.Any(interval =>
+                sample.UsedPercent > interval.StartUsedPercent &&
+                sample.UsedPercent <= interval.EndUsedPercent));
         state.Samples.AddRange(result.Samples);
         state.Samples.Sort((left, right) => left.Timestamp.CompareTo(right.Timestamp));
         state.HistoricalReplayVersion = CurrentReplayVersion;

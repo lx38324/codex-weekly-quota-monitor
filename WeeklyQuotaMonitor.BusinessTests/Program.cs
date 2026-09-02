@@ -83,6 +83,7 @@ internal static class Program
             TestHistoricalReplayExcludesResponsesAfterFirstObservation,
             TestHistoricalReplayRejectsSlidingZeroAndBuildsSamples,
             TestHistoricalReplayApplyIsIdempotent,
+            TestHistoricalReplayApplyPreservesUncoveredReplaySamples,
             TestMalformedLineDoesNotBlockLaterResponse,
             TestPartialLineWaitsForNewline,
             TestTruncatedFileRestartsCursor,
@@ -1929,7 +1930,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证当前周重放可重复合入：替换成功覆盖区间，刷新旧重放点，并保留未覆盖实时样本和旧价格归档样本。
+    /// 验证当前周重放可重复合入：替换成功覆盖区间的实时点和旧重放点，并保留未覆盖实时样本和旧价格归档样本。
     /// </summary>
     private static void TestHistoricalReplayApplyIsIdempotent()
     {
@@ -1944,9 +1945,9 @@ internal static class Program
             UsedPercent = 25m,
             DeltaPercent = 1m
         };
-        var staleReplay = CurrentSample(timestamp.AddMinutes(-30), 700m) with
+        var coveredReplay = CurrentSample(timestamp.AddMinutes(-30), 700m) with
         {
-            UsedPercent = 17m,
+            UsedPercent = 18m,
             DeltaPercent = 1m,
             SampleSource = HistoricalReplayCalculator.HistoricalSampleSource
         };
@@ -1957,7 +1958,7 @@ internal static class Program
             DeltaPercent = 1m,
             SampleSource = HistoricalReplayCalculator.HistoricalSampleSource
         };
-        var state = new MonitorState { Samples = [archived, staleReplay, coveredLive, uncoveredLive] };
+        var state = new MonitorState { Samples = [archived, coveredReplay, coveredLive, uncoveredLive] };
         var result = new HistoricalReplayResult(
             timestamp.AddHours(-1),
             timestamp.AddHours(1),
@@ -1980,7 +1981,7 @@ internal static class Program
         Equal(2, state.Samples.Count(PublicApiPricing.IsCurrentSample), "当前价格版本应保留一个重建点和一个未覆盖实时点");
         Equal(true, state.Samples.Contains(uncoveredLive), "历史无法重建的 25% 实时样本不得被删除");
         Equal(false, state.Samples.Contains(coveredLive), "18% 成功重建区间应替换原实时样本");
-        Equal(false, state.Samples.Contains(staleReplay), "旧重放点应由本轮结果刷新");
+        Equal(false, state.Samples.Contains(coveredReplay), "成功覆盖区间的旧重放点应由本轮结果刷新");
         Near(
             42m,
             state.Samples.Single(sample => sample.UsedPercent == 18m).EstimatedWeeklyQuotaUsd,
@@ -1988,6 +1989,72 @@ internal static class Program
             "重建点应替换成功覆盖区间的旧当前点");
         Equal(HistoricalReplayCalculator.CurrentReplayVersion, state.HistoricalReplayVersion, "历史重放版本应持久化");
         Equal(false, HistoricalReplayCalculator.IsReplayRequired(state), "相同重放和价格版本不应再次扫描");
+    }
+
+    /// <summary>
+    /// 模拟当前周历史重放从 17 个可用区间退化为 7 个区间，验证未被新结果覆盖的旧重放点不会丢失。
+    /// </summary>
+    /// <remarks>输入由方法内构造；无返回值，合并数量、替换结果或幂等性不符合预期时由断言报告失败。</remarks>
+    private static void TestHistoricalReplayApplyPreservesUncoveredReplaySamples()
+    {
+        var windowStart = new DateTimeOffset(2026, 8, 31, 8, 0, 0, TimeSpan.FromHours(8));
+        var oldReplaySamples = Enumerable.Range(1, 17)
+            .Select(index => CurrentSample(windowStart.AddMinutes(index), 1000m + index) with
+            {
+                UsedPercent = index,
+                DeltaPercent = 1m,
+                SampleSource = HistoricalReplayCalculator.HistoricalSampleSource
+            })
+            .ToArray();
+        var replacementSamples = Enumerable.Range(1, 7)
+            .Select(index => CurrentSample(windowStart.AddMinutes(index).AddSeconds(30), 2000m + index) with
+            {
+                UsedPercent = index,
+                DeltaPercent = 1m,
+                SampleSource = HistoricalReplayCalculator.HistoricalSampleSource
+            })
+            .ToArray();
+        var state = new MonitorState { Samples = oldReplaySamples.ToList() };
+        var result = new HistoricalReplayResult(
+            windowStart,
+            windowStart.AddHours(1),
+            "codex",
+            replacementSamples,
+            18,
+            8,
+            10,
+            7,
+            0,
+            10,
+            0,
+            Enumerable.Range(8, 10).Select(value => (decimal)value).ToArray(),
+            [],
+            0);
+
+        HistoricalReplayCalculator.ApplyToState(state, result);
+        HistoricalReplayCalculator.ApplyToState(state, result);
+
+        Equal(17, state.Samples.Count, "质量退化且重复合入后仍应保留 17 个历史样本");
+        Equal(17, state.Samples.Count(sample =>
+            string.Equals(
+                sample.SampleSource,
+                HistoricalReplayCalculator.HistoricalSampleSource,
+                StringComparison.Ordinal)), "全部样本仍应保持历史重放来源");
+        foreach (var replacement in replacementSamples)
+        {
+            Equal(1, state.Samples.Count(sample => sample.UsedPercent == replacement.UsedPercent),
+                $"{replacement.UsedPercent}% 成功覆盖区间只应保留一个新结果");
+            Near(
+                replacement.EstimatedWeeklyQuotaUsd,
+                state.Samples.Single(sample => sample.UsedPercent == replacement.UsedPercent).EstimatedWeeklyQuotaUsd,
+                0.000001m,
+                $"{replacement.UsedPercent}% 成功覆盖区间应使用本轮重放结果");
+        }
+
+        foreach (var oldReplay in oldReplaySamples.Where(sample => sample.UsedPercent >= 8m))
+        {
+            Equal(true, state.Samples.Contains(oldReplay), $"{oldReplay.UsedPercent}% 未覆盖旧重放点不得被删除");
+        }
     }
 
     /// <summary>
