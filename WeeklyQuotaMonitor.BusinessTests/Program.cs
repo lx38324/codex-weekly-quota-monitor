@@ -1211,14 +1211,16 @@ internal static class Program
         Equal(true, FindControls<StatusStrip>(form).Single().Items[0].Text!.Contains("旧价格"), "各标签页均可看到旧价格状态");
     }
 
-    /// <summary>验证历史扫描提供确定文件进度，并在换价取消后停止，随后新扫描仍能完整提取。</summary>
+    /// <summary>验证取消后新扫描可完整提取并报告进度；固定文件时间，避免主机时钟与文件系统时间精度竞争。</summary>
     private static void TestHistoricalScanCancellationAndProgress()
     {
         var directory = CreateTemporaryDirectory();
-        var timestamp = DateTimeOffset.UtcNow;
-        File.WriteAllLines(Path.Combine(directory, "rollout-progress.jsonl"),
+        var timestamp = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        var path = Path.Combine(directory, "rollout-progress.jsonl");
+        File.WriteAllLines(path,
         [TurnContextLine(timestamp, "gpt-6-astra", "standard"), ResponseItemLine(timestamp.AddSeconds(1)),
             TokenCountLine(timestamp.AddSeconds(2), 1000, 500, 0, 100, 0)]);
+        File.SetLastWriteTimeUtc(path, timestamp.AddSeconds(3).UtcDateTime);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var cancelled = false;
