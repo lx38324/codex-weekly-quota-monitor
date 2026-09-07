@@ -409,7 +409,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证用户最新 1265×812 窗口截图对应的客户区在 125% 内容缩放后，品牌、状态徽标和样本说明仍完整显示。
+    /// 验证 125% 内容缩放后品牌、状态徽标和样本说明完整显示；时间预期转换为测试主机本地时区。
     /// </summary>
     private static void TestDashboardFitsHighScaleScreenshotViewport()
     {
@@ -427,7 +427,8 @@ internal static class Program
         Equal(true, sidebar.ClientRectangle.Contains(productRectangle), "125% 缩放下侧栏产品名不得横向裁切");
 
         var badge = FindControls<ConnectionBadge>(form).Single();
-        Equal("已连接 · 12:34:56", badge.Text, "连接徽标应使用不含上午/下午前缀的紧凑 24 小时文本");
+        var localTime = new DateTimeOffset(2026, 9, 1, 12, 34, 56, TimeSpan.FromHours(8)).LocalDateTime;
+        Equal($"已连接 · {localTime:HH:mm:ss}", badge.Text, "连接徽标应使用本地时区、不含上午/下午前缀的紧凑 24 小时文本");
         var badgePreferredSize = badge.GetPreferredSize(Size.Empty);
         Equal(true, badge.Width >= badgePreferredSize.Width, "连接徽标实际宽度不得小于完整文本首选宽度");
 
