@@ -41,7 +41,8 @@ public sealed class JsonStorage
             settings.SettingsSchemaVersion = 0;
         }
 
-        if (AppSettingsMigration.Apply(settings))
+        var modelPricesPresent = document.RootElement.TryGetProperty(nameof(AppSettings.ModelPrices), out _);
+        if (AppSettingsMigration.Apply(settings, modelPricesPresent))
         {
             SaveSettings(settings);
         }
@@ -69,6 +70,14 @@ public sealed class JsonStorage
     /// </summary>
     /// <returns>已有状态或首次运行的空状态。</returns>
     public MonitorState LoadState()
+        => LoadState(PublicApiPricing.PricingVersion);
+
+    /// <summary>
+    /// 读取监控状态并按当前价格版本清理不能安全续接的待采样区间。
+    /// </summary>
+    /// <param name="pricingVersion">当前生效模型价格配置的稳定版本。</param>
+    /// <returns>已恢复比较器且与当前价格兼容的监控状态。</returns>
+    public MonitorState LoadState(string pricingVersion)
     {
         Directory.CreateDirectory(AppPaths.DataDirectory);
         if (!File.Exists(AppPaths.StateFile))
@@ -90,39 +99,8 @@ public sealed class JsonStorage
             StringComparer.OrdinalIgnoreCase);
         RolloutLogReader.MigrateServiceTierTrackingState(state);
         RolloutLogReader.MigrateResponseAssociationTrackingState(state);
-        ResetIncompatiblePendingInterval(state);
+        QuotaEstimator.ResetIncompatiblePendingInterval(state, pricingVersion);
         return state;
-    }
-
-    /// <summary>
-    /// 升级金额口径或价格版本后清除无法安全重算的跨版本 pending 区间，同时保留历史样本。
-    /// </summary>
-    /// <param name="state">刚从 state.json 恢复的监控状态。</param>
-    private static void ResetIncompatiblePendingInterval(MonitorState state)
-    {
-        var hasPendingData = state.PendingModelResponseCount > 0 ||
-                             state.PendingUnpricedModelResponses > 0 ||
-                             state.PendingApiEquivalentUsd > 0 ||
-                             state.PendingOfficialLongContextApiEquivalentUsd > 0 ||
-                             !state.PendingUsage.IsZero();
-        if (!hasPendingData ||
-            string.Equals(state.PendingPricingVersion, PublicApiPricing.PricingVersion, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        state.UnattributedPercentChanges++;
-        state.PendingApiEquivalentUsd = 0;
-        state.PendingOfficialLongContextApiEquivalentUsd = 0;
-        state.PendingUsage = TokenUsage.Zero;
-        state.PendingModelResponseCount = 0;
-        state.PendingModels.Clear();
-        state.PendingServiceTiers.Clear();
-        state.PendingCreditMultipliers.Clear();
-        state.PendingPricingVersion = string.Empty;
-        state.PendingUnpricedModelResponses = 0;
-        state.PendingMalformedRolloutLines = 0;
-        state.PendingRotatedRolloutFiles = 0;
     }
 
     /// <summary>

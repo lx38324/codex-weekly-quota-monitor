@@ -7,14 +7,16 @@ namespace WeeklyQuotaMonitor.Core;
 /// </summary>
 public static class RateLimitParser
 {
+    private const string DefaultCodexLimitId = "codex";
+
     /// <summary>
     /// 从 account/rateLimits/read 响应或 account/rateLimits/updated 通知中选择目标额度窗口。
     /// </summary>
     /// <param name="container">result、params 或直接的 rateLimits 对象。</param>
-    /// <param name="preferredLimitId">可选的额度桶标识；为空时自动选择最长窗口。</param>
+    /// <param name="preferredLimitId">可选的额度桶标识；为空时自动选择最长窗口，并在等长时优先 Codex 主桶。</param>
     /// <param name="minimumWindowMinutes">自动选择时允许的最短窗口，用于排除 5 小时桶。</param>
     /// <param name="sampledAt">本次本地采样时间。</param>
-    /// <returns>最长且满足约束的窗口；没有匹配窗口时返回 null。</returns>
+    /// <returns>满足约束的最长窗口；等长时优先 Codex 主桶，没有匹配窗口时返回 null。</returns>
     public static RateLimitSnapshot? Parse(
         JsonElement container,
         string preferredLimitId,
@@ -52,6 +54,8 @@ public static class RateLimitParser
 
         var selected = filtered
             .OrderByDescending(candidate => candidate.WindowDurationMinutes)
+            .ThenByDescending(candidate =>
+                string.Equals(candidate.LimitId, DefaultCodexLimitId, StringComparison.Ordinal))
             .ThenBy(candidate => candidate.LimitId, StringComparer.Ordinal)
             .FirstOrDefault();
 

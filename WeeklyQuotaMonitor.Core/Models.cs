@@ -72,7 +72,14 @@ public sealed record QuotaSample(
     public string ServiceTiers { get; init; } = string.Empty;
     public string CreditMultipliers { get; init; } = string.Empty;
     public string SampleSource { get; init; } = "live";
+    public IReadOnlyList<ResponsePricingUsage> PricingUsages { get; init; } = [];
 }
+
+/// <summary>
+/// 保存逐响应计价依据；保留每次输入长度，使修改长上下文阈值后仍能精确重算。
+/// 不保存对话正文或本地路径。
+/// </summary>
+public sealed record ResponsePricingUsage(string Model, string ServiceTier, TokenUsage Usage);
 
 /// <summary>
 /// 表示图表上的时间与金额坐标。
@@ -158,6 +165,7 @@ public sealed class MonitorState
     public decimal PendingApiEquivalentUsd { get; set; }
     public decimal PendingOfficialLongContextApiEquivalentUsd { get; set; }
     public TokenUsage PendingUsage { get; set; } = TokenUsage.Zero;
+    public List<ResponsePricingUsage> PendingPricingUsages { get; set; } = [];
     public int PendingModelResponseCount { get; set; }
     public HashSet<string> PendingModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> PendingServiceTiers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -185,6 +193,7 @@ public sealed record RolloutScanResult(
     int UnpricedModelResponses,
     IReadOnlyCollection<string> UnpricedModels)
 {
+    public IReadOnlyList<ResponsePricingUsage> PricingUsages { get; init; } = [];
     public decimal OfficialLongContextApiEquivalentUsd { get; init; }
     public IReadOnlyCollection<string> ServiceTiers { get; init; } = [];
     public IReadOnlyCollection<string> CreditMultipliers { get; init; } = [];
@@ -249,7 +258,10 @@ public sealed record HistoricalRolloutFacts(
     IReadOnlyList<HistoricalResponseFact> Responses,
     IReadOnlyList<HistoricalRateLimitCheckpoint> RateLimitCheckpoints,
     int FilesScanned,
-    int MalformedLineCount);
+    int MalformedLineCount)
+{
+    public string PricingVersion { get; init; } = PublicApiPricing.PricingVersion;
+}
 
 /// <summary>
 /// 表示一次历史重放生成的当前口径样本和时间线归一化诊断。
@@ -268,7 +280,10 @@ public sealed record HistoricalReplayResult(
     int AwaitingLogIntervalCount,
     IReadOnlyList<decimal> UnattributedUsedPercents,
     IReadOnlyList<string> UnresolvedSourceFiles,
-    int MalformedLineCount);
+    int MalformedLineCount)
+{
+    public string PricingVersion { get; init; } = PublicApiPricing.PricingVersion;
+}
 
 /// <summary>
 /// 汇总图表保留期内多个旧额度窗口的重建结果和一次性扫描诊断。
@@ -279,7 +294,10 @@ public sealed record HistoricalArchiveReplayResult(
     string LimitId,
     IReadOnlyList<HistoricalReplayResult> Windows,
     int FilesScanned,
-    int MalformedLineCount);
+    int MalformedLineCount)
+{
+    public string PricingVersion { get; init; } = PublicApiPricing.PricingVersion;
+}
 
 /// <summary>
 /// 表示托盘、详情窗和图表窗共同消费的只读展示快照。
@@ -295,6 +313,8 @@ public sealed record MonitorViewSnapshot(
     IReadOnlyList<QuotaSample> Samples,
     IReadOnlyList<CurvePoint> RegressionCurve)
 {
+    public bool ShowingPreviousPrices { get; init; }
+    public string PricingVersion { get; init; } = PublicApiPricing.PricingVersion;
     public decimal? OfficialLongContextEstimatedWeeklyQuotaUsd { get; init; }
     public IReadOnlyList<CurvePoint> OfficialLongContextRegressionCurve { get; init; } = [];
     public int ArchivedSampleCount { get; init; }

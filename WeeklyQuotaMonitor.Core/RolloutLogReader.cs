@@ -14,6 +14,24 @@ public sealed partial class RolloutLogReader
     public const int CurrentResponseAssociationTrackingVersion = 1;
     private const int SessionHeaderPrefixBytes = 4096;
     private const int StreamingReadBufferBytes = 64 * 1024;
+    private readonly PricingCatalog _pricingCatalog;
+
+    /// <summary>
+    /// 创建使用程序内置价格的日志读取器，供既有调用和独立业务测试使用。
+    /// </summary>
+    public RolloutLogReader()
+        : this(PublicApiPricing.BuiltInCatalog)
+    {
+    }
+
+    /// <summary>
+    /// 创建绑定指定不可变价格配置的日志读取器，保证一次扫描不会混入设置变更后的价格。
+    /// </summary>
+    /// <param name="pricingCatalog">本轮实时扫描或历史重放使用的完整价格配置。</param>
+    public RolloutLogReader(PricingCatalog pricingCatalog)
+    {
+        _pricingCatalog = pricingCatalog;
+    }
 
     /// <summary>
     /// 首次启动时把已有日志设为基线；仅扫描近期文件内容以保留正在进行响应的模型上下文。
@@ -75,7 +93,7 @@ public sealed partial class RolloutLogReader
         MigrateServiceTierTrackingState(state);
         MigrateResponseAssociationTrackingState(state);
         var configuredTier = ReadConfiguredServiceTierEvidence(sessionRoot);
-        var accumulator = new ScanAccumulator(includeSince);
+        var accumulator = new ScanAccumulator(_pricingCatalog, includeSince);
         var paths = EnumerateRolloutFiles(sessionRoot).ToArray();
         var currentPaths = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
         var removedCursors = state.FileCursors.Keys
@@ -136,13 +154,17 @@ public sealed partial class RolloutLogReader
     /// <param name="windowStart">当前周窗口起点。</param>
     /// <param name="windowEnd">当前权威额度快照时间。</param>
     /// <param name="windowDurationMinutes">需要提取的周窗口分钟数。</param>
+    /// <param name="cancellationToken">改价或退出时取消过时扫描。</param>
+    /// <param name="progress">报告已完成和总文件数；回调不包含文件路径。</param>
     /// <returns>不修改增量游标的历史事实和完整性诊断。</returns>
     public HistoricalRolloutFacts ReadHistoricalFacts(
         string sessionRoot,
         DateTimeOffset windowStart,
         DateTimeOffset windowEnd,
-        int windowDurationMinutes)
-        => ReadHistoricalFacts([sessionRoot], windowStart, windowEnd, windowDurationMinutes);
+        int windowDurationMinutes,
+        CancellationToken cancellationToken = default,
+        IProgress<(int Completed, int Total)>? progress = null)
+        => ReadHistoricalFacts([sessionRoot], windowStart, windowEnd, windowDurationMinutes, cancellationToken, progress);
 
     /// <summary>
     /// 从多个 Codex 会话根目录一次性重读历史上下文，并按 rollout 文件名去重活动与归档副本。
@@ -151,13 +173,18 @@ public sealed partial class RolloutLogReader
     /// <param name="windowStart">历史重放最早时间。</param>
     /// <param name="windowEnd">历史重放最晚时间。</param>
     /// <param name="windowDurationMinutes">需要提取的额度窗口分钟数。</param>
+    /// <param name="cancellationToken">每条完整日志处理前检查取消。</param>
+    /// <param name="progress">报告文件扫描进度。</param>
     /// <returns>不修改增量游标的合并历史事实和完整性诊断。</returns>
     public HistoricalRolloutFacts ReadHistoricalFacts(
         IReadOnlyCollection<string> sessionRoots,
         DateTimeOffset windowStart,
         DateTimeOffset windowEnd,
-        int windowDurationMinutes)
+        int windowDurationMinutes,
+        CancellationToken cancellationToken = default,
+        IProgress<(int Completed, int Total)>? progress = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (sessionRoots.Count == 0)
         {
             throw new ArgumentException("历史重放至少需要一个 Codex 会话根目录。", nameof(sessionRoots));
@@ -174,6 +201,7 @@ public sealed partial class RolloutLogReader
         }
 
         var accumulator = new ScanAccumulator(
+            _pricingCatalog,
             windowStart,
             windowEnd,
             windowDurationMinutes);
@@ -189,12 +217,16 @@ public sealed partial class RolloutLogReader
             .Select(group => group.MaxBy(path => new FileInfo(path).Length)!)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var completed = 0;
+        progress?.Report((0, paths.Length));
         foreach (var path in paths)
         {
-            var tierProbe = new ScanAccumulator(null);
+            cancellationToken.ThrowIfCancellationRequested();
+            var tierProbe = new ScanAccumulator(_pricingCatalog, null, retainPricingUsages: false);
             var tierProbeCursor = new FileCursorState();
             ProcessCompleteLines(path, 0, line =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 ProcessLine(line, tierProbeCursor, tierProbe, null);
             });
 
@@ -207,11 +239,13 @@ public sealed partial class RolloutLogReader
             accumulator.SetHistoricalSourceFile(path);
             ProcessCompleteLines(path, 0, line =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!ProcessLine(line, cursor, accumulator, windowStart))
                 {
                     accumulator.AddMalformedLine();
                 }
             });
+            progress?.Report((++completed, paths.Length));
         }
 
         return accumulator.ToHistoricalFacts(windowStart, windowEnd, paths.Length);
@@ -1020,6 +1054,9 @@ public sealed partial class RolloutLogReader
     /// </summary>
     private sealed class ScanAccumulator
     {
+        private readonly PricingCatalog _pricingCatalog;
+        private readonly List<ResponsePricingUsage> _pricingUsages = [];
+        private readonly bool _retainPricingUsages;
         private readonly DateTimeOffset? _includedSince;
         private readonly DateTimeOffset? _historicalWindowEnd;
         private readonly int? _historicalWindowDurationMinutes;
@@ -1044,9 +1081,12 @@ public sealed partial class RolloutLogReader
         /// 创建一次扫描累加器并保存本轮用于重置窗口切分的最早时间。
         /// </summary>
         /// <param name="includedSince">仅纳入计价的最早 token_count 时间。</param>
-        public ScanAccumulator(DateTimeOffset? includedSince)
+        /// <param name="retainPricingUsages">仅实时扫描保留计价明细，层级探测不重复保存响应。</param>
+        public ScanAccumulator(PricingCatalog pricingCatalog, DateTimeOffset? includedSince, bool retainPricingUsages = true)
         {
+            _pricingCatalog = pricingCatalog;
             _includedSince = includedSince;
+            _retainPricingUsages = retainPricingUsages;
         }
 
         /// <summary>
@@ -1056,10 +1096,12 @@ public sealed partial class RolloutLogReader
         /// <param name="windowEnd">当前权威额度快照时间。</param>
         /// <param name="windowDurationMinutes">需要提取的周窗口分钟数。</param>
         public ScanAccumulator(
+            PricingCatalog pricingCatalog,
             DateTimeOffset windowStart,
             DateTimeOffset windowEnd,
             int windowDurationMinutes)
         {
+            _pricingCatalog = pricingCatalog;
             _includedSince = windowStart;
             _historicalWindowEnd = windowEnd;
             _historicalWindowDurationMinutes = windowDurationMinutes;
@@ -1208,7 +1250,7 @@ public sealed partial class RolloutLogReader
                 return;
             }
 
-            var pricing = PublicApiPricing.Calculate(model, serviceTier, usage);
+            var pricing = _pricingCatalog.Calculate(model, serviceTier, usage);
             if (_historicalWindowDurationMinutes is not null)
             {
                 _historicalResponses.Add(new(
@@ -1235,6 +1277,7 @@ public sealed partial class RolloutLogReader
                 return;
             }
 
+            if (_retainPricingUsages) _pricingUsages.Add(new(model, serviceTier, usage));
             _usage = _usage.Add(usage);
             _costUsd += pricing.CostUsd;
             _officialLongContextCostUsd += pricing.OfficialLongContextCostUsd;
@@ -1272,10 +1315,11 @@ public sealed partial class RolloutLogReader
             _unpricedCount,
             _unpricedModels.OrderBy(model => model, StringComparer.OrdinalIgnoreCase).ToArray())
         {
+            PricingUsages = _pricingUsages.ToArray(),
             OfficialLongContextApiEquivalentUsd = _officialLongContextCostUsd,
             ServiceTiers = _serviceTiers.OrderBy(tier => tier, StringComparer.OrdinalIgnoreCase).ToArray(),
             CreditMultipliers = _creditMultipliers.OrderBy(multiplier => multiplier, StringComparer.OrdinalIgnoreCase).ToArray(),
-            PricingVersion = PublicApiPricing.PricingVersion,
+            PricingVersion = _pricingCatalog.PricingVersion,
             IncludedSince = _includedSince,
             MalformedLineCount = _malformedLineCount,
             RotatedFileCount = _rotatedFileCount,
@@ -1298,7 +1342,10 @@ public sealed partial class RolloutLogReader
                 _historicalResponses.OrderBy(response => response.Timestamp).ToArray(),
                 _historicalCheckpoints.Values.OrderBy(checkpoint => checkpoint.Timestamp).ToArray(),
                 filesScanned,
-                _malformedLineCount);
+                _malformedLineCount)
+            {
+                PricingVersion = _pricingCatalog.PricingVersion
+            };
     }
 
     /// <summary>

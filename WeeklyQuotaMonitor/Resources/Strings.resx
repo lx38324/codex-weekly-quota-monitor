@@ -75,6 +75,7 @@
   <data name="SettingsDataSource" xml:space="preserve"><value>Data sources</value></data>
   <data name="SettingsSampling" xml:space="preserve"><value>Sampling</value></data>
   <data name="SettingsEstimation" xml:space="preserve"><value>Estimation</value></data>
+  <data name="SettingsPricing" xml:space="preserve"><value>Model pricing</value></data>
   <data name="SettingsAppearance" xml:space="preserve"><value>Appearance</value></data>
   <data name="SettingsAdvanced" xml:space="preserve"><value>Advanced</value></data>
   <data name="SettingsLanguage" xml:space="preserve"><value>Language</value></data>
@@ -102,6 +103,20 @@
   <data name="SettingsMaximumSample" xml:space="preserve"><value>Maximum valid sample amount (USD)</value></data>
   <data name="SettingsOfficialLongContext" xml:space="preserve"><value>Additional amount basis</value></data>
   <data name="SettingsOfficialLongContextOption" xml:space="preserve"><value>Enable official &gt;272K long-context comparison</value></data>
+  <data name="PricingDescription" xml:space="preserve"><value>Select a model and edit its Standard API-equivalent prices in USD per million tokens. Saving reprices the current week and retained history; Auto-review continues to use Luna prices.</value></data>
+  <data name="PricingModel" xml:space="preserve"><value>Model</value></data>
+  <data name="PricingShortContext" xml:space="preserve"><value>Short-context prices (USD / 1M tokens)</value></data>
+  <data name="PricingLongContext" xml:space="preserve"><value>Long-context prices (USD / 1M tokens)</value></data>
+  <data name="PricingLongPricing" xml:space="preserve"><value>Long-context tier</value></data>
+  <data name="PricingLongEnabled" xml:space="preserve"><value>Enable long-context pricing</value></data>
+  <data name="PricingThreshold" xml:space="preserve"><value>Long-context threshold (input tokens)</value></data>
+  <data name="PricingInput" xml:space="preserve"><value>Uncached input</value></data>
+  <data name="PricingCachedInput" xml:space="preserve"><value>Cached input</value></data>
+  <data name="PricingCacheWrite" xml:space="preserve"><value>Cache writes</value></data>
+  <data name="PricingOutput" xml:space="preserve"><value>Output</value></data>
+  <data name="PricingCacheWriteEnabled" xml:space="preserve"><value>Enable</value></data>
+  <data name="PricingRestoreBuiltIn" xml:space="preserve"><value>Restore built-in prices</value></data>
+  <data name="PricingRestoredPending" xml:space="preserve"><value>Built-in prices restored. Choose Save and apply to activate them.</value></data>
   <data name="SettingsNote" xml:space="preserve"><value>{0} resolves the currently installed Codex Desktop package at every launch. Amounts use public Standard API prices × ChatGPT Fast credit multipliers (checked {1}). Auto-review assumption: {2}. Values are estimates, not subscription bills.</value></data>
   <data name="SaveApply" xml:space="preserve"><value>Save and apply</value></data>
   <data name="Revert" xml:space="preserve"><value>Revert unsaved changes</value></data>
@@ -124,6 +139,11 @@
   <data name="ValidationSegment" xml:space="preserve"><value>Segment window must be greater than zero.</value></data>
   <data name="ValidationGaussian" xml:space="preserve"><value>Gaussian bandwidth must be greater than zero.</value></data>
   <data name="ValidationMaximum" xml:space="preserve"><value>Maximum sample amount must be greater than zero.</value></data>
+  <data name="ValidationPricesMissing" xml:space="preserve"><value>The model price table must contain at least one model.</value></data>
+  <data name="ValidationPriceModelMissing" xml:space="preserve"><value>The model price table contains an empty model ID.</value></data>
+  <data name="ValidationPriceDuplicate" xml:space="preserve"><value>The model price table contains a duplicate model: {0}.</value></data>
+  <data name="ValidationPriceBand" xml:space="preserve"><value>{0} has invalid {1}: input and output prices must be positive, and cached-input and cache-write prices cannot be negative.</value></data>
+  <data name="ValidationPriceLongThreshold" xml:space="preserve"><value>The long-context threshold for {0} must be positive.</value></data>
   <data name="DetailsWaiting" xml:space="preserve"><value>Estimated weekly quota: waiting for valid samples</value></data>
   <data name="DetailsEstimateBase" xml:space="preserve"><value>Standard API equivalent weekly quota: ${0:N2}</value></data>
   <data name="DetailsEstimates" xml:space="preserve"><value>No long-context surcharge: ${0:N2}&#13;&#10;Official &gt;272K surcharge: ${1:N2}</value></data>
@@ -159,4 +179,10 @@
   <data name="ChartHover" xml:space="preserve"><value>{0:g} · {1} · ${2:N2}</value></data>
   <data name="ChartHoverContribution" xml:space="preserve"><value>{0:g} · {1} · ${2:N2} · current weight {3:P0}</value></data>
   <data name="QuickDetailsStatus" xml:space="preserve"><value>Runtime status: {0}</value></data>
+  <data name="RepricingCurrent" xml:space="preserve"><value>Rebuilding current week</value></data>
+  <data name="RepricingArchive" xml:space="preserve"><value>Backfilling historical pricing details</value></data>
+  <data name="RepricingCancelled" xml:space="preserve"><value>Outdated scan cancelled; latest prices queued.</value></data>
+  <data name="RepricingShowingPrevious" xml:space="preserve"><value>Showing previous-price results until new results are ready.</value></data>
+  <data name="RepricingPreviousLabel" xml:space="preserve"><value>Previous prices</value></data>
+  <data name="RepricingCoverage" xml:space="preserve"><value>Repriced {0} intervals; {1} lack complete details; {2} pricing errors.</value></data>
 </root>

@@ -25,6 +25,7 @@ public sealed class AppSettings
     public UiLanguage Language { get; set; } = UiLanguage.Auto;
     public UiTheme Theme { get; set; } = UiTheme.System;
     public RegressionOptions Regression { get; set; } = new();
+    public List<ModelPriceProfile> ModelPrices { get; set; } = PublicApiPricing.GetBuiltInProfiles().ToList();
 
     /// <summary>
     /// 验证设置值是否满足协议、轮询和回归算法的硬约束。
@@ -45,7 +46,78 @@ public sealed class AppSettings
         if (Regression.SegmentWindowHours <= 0) errors.Add(UiText.Get("ValidationSegment"));
         if (Regression.GaussianBandwidthHours <= 0) errors.Add(UiText.Get("ValidationGaussian"));
         if (Regression.MaximumSampleUsd <= 0) errors.Add(UiText.Get("ValidationMaximum"));
+        ValidateModelPrices(errors);
         return errors;
+    }
+
+    /// <summary>
+    /// 验证模型价格表的唯一性、必填价格和长上下文阈值，避免保存后才在日志扫描中失败。
+    /// </summary>
+    /// <param name="errors">接收区域化业务错误的设置校验集合。</param>
+    private void ValidateModelPrices(List<string> errors)
+    {
+        if (ModelPrices is null || ModelPrices.Count == 0)
+        {
+            errors.Add(UiText.Get("ValidationPricesMissing"));
+            return;
+        }
+
+        var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var profile in ModelPrices)
+        {
+            var model = profile.Model?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                errors.Add(UiText.Get("ValidationPriceModelMissing"));
+                continue;
+            }
+
+            if (!models.Add(model))
+            {
+                errors.Add(UiText.Format("ValidationPriceDuplicate", model));
+            }
+
+            if (profile.ShortContext is null)
+            {
+                errors.Add(UiText.Format("ValidationPriceBand", model, UiText.Get("PricingShortContext")));
+                continue;
+            }
+
+            ValidatePriceBand(errors, model, UiText.Get("PricingShortContext"), profile.ShortContext);
+            if (profile.LongContextThresholdTokens <= 0)
+            {
+                errors.Add(UiText.Format("ValidationPriceLongThreshold", model));
+            }
+
+            if (profile.LongContext is null)
+            {
+                continue;
+            }
+
+            ValidatePriceBand(errors, model, UiText.Get("PricingLongContext"), profile.LongContext);
+        }
+    }
+
+    /// <summary>
+    /// 验证一个上下文档位的输入、缓存读取、缓存写入和输出价格数值边界。
+    /// </summary>
+    /// <param name="errors">接收区域化业务错误的设置校验集合。</param>
+    /// <param name="model">用于定位错误的模型标识。</param>
+    /// <param name="contextName">短上下文或长上下文的区域化名称。</param>
+    /// <param name="band">需要验证的价格档位。</param>
+    private static void ValidatePriceBand(
+        List<string> errors,
+        string model,
+        string contextName,
+        PriceBand band)
+    {
+        if (band.InputPerMillion <= 0 ||
+            band.CachedInputPerMillion < 0 ||
+            band.OutputPerMillion <= 0 ||
+            band.CacheWritePerMillion is < 0)
+        {
+            errors.Add(UiText.Format("ValidationPriceBand", model, contextName));
+        }
     }
 }
 
@@ -54,16 +126,17 @@ public sealed class AppSettings
 /// </summary>
 public static class AppSettingsMigration
 {
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
     public const decimal LegacyMaximumSampleUsd = 1000m;
     public const decimal DefaultMaximumSampleUsd = 10000m;
 
     /// <summary>
-    /// 将旧版默认的 1000 美元过滤上限迁移为 10000 美元，补齐界面偏好，并让新增的 >272K 对比口径保持默认关闭。
+    /// 将旧版默认值迁移到当前设置结构，并为尚无价格字段的版本显式写入程序内置模型价格。
     /// </summary>
     /// <param name="settings">从 settings.json 反序列化的设置。</param>
+    /// <param name="modelPricesPresent">原始 JSON 是否明确包含模型价格字段。</param>
     /// <returns>设置内容发生变化时返回 true。</returns>
-    public static bool Apply(AppSettings settings)
+    public static bool Apply(AppSettings settings, bool modelPricesPresent = true)
     {
         if (settings.SettingsSchemaVersion > CurrentVersion)
         {
@@ -72,6 +145,12 @@ public static class AppSettingsMigration
         }
 
         var changed = false;
+        if (settings.SettingsSchemaVersion < 5 && !modelPricesPresent)
+        {
+            settings.ModelPrices = PublicApiPricing.GetBuiltInProfiles().ToList();
+            changed = true;
+        }
+
         if (settings.SettingsSchemaVersion < CurrentVersion &&
             settings.Regression.MaximumSampleUsd == LegacyMaximumSampleUsd)
         {

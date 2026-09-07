@@ -25,8 +25,20 @@ internal static class Program
                 CaptureDashboard(arguments[1]);
                 return;
             }
+            if (arguments.Length == 2 && string.Equals(arguments[0], "--capture-repricing", StringComparison.Ordinal))
+            {
+                CaptureDashboard(arguments[1], repricing: true);
+                return;
+            }
 
-            throw new InvalidDataException("仅支持 --capture-dashboard <png-path> 预览参数。");
+            if (arguments.Length == 2 && string.Equals(arguments[0], "--capture-pricing", StringComparison.Ordinal))
+            {
+                CapturePricingSettings(arguments[1]);
+                return;
+            }
+
+            throw new InvalidDataException(
+                "仅支持 --capture-dashboard <png-path> 或 --capture-pricing <png-path> 预览参数。");
         }
 
         var tests = new Action[]
@@ -34,12 +46,22 @@ internal static class Program
             TestAutomaticWindowsLanguageSelection,
             TestManualLanguagePersistsAndOverridesWindows,
             TestSettingsSchema2AddsAppearancePreferences,
+            TestSettingsSchema4AddsBuiltInModelPrices,
             TestOfficialLongContextEstimateIsOptIn,
             TestThemeSelectionRespectsManualOverride,
             TestDashboardLayoutAtSupportedDpiScales,
             TestDashboardFitsReportedViewport,
             TestDashboardFitsHighScaleScreenshotViewport,
             TestTrendControlsFitHighlightAndDefaultToThirtyDays,
+            TestAstraShortContextStandardPricing,
+            TestAstraLongContextStandardPricing,
+            TestAstraFastCreditMultiplier,
+            TestCustomAstraCachedPriceRepricesAndVersionsSamples,
+            TestOfflineRepricingMixedResponsesAfterReload,
+            TestRepricingRetainsUnrecoverableHistory,
+            TestPriceSwitchKeepsVisibleCurveUntilReady,
+            TestHistoricalScanCancellationAndProgress,
+            TestPricingEditorRestoresBuiltInPrices,
             TestShortContextStandardPricing,
             TestLongContextStandardPricing,
             TestLongContextOfficialSurchargeCombinesWithFast,
@@ -49,6 +71,7 @@ internal static class Program
             TestObservedGpt52StandardPricing,
             TestAutoReviewUsesLunaPricingEndToEnd,
             TestWeeklyWindowSelection,
+            TestAutomaticWeeklyWindowPrefersCodexBucket,
             TestQuotaEstimationPersistsAmountDefinition,
             TestConfirmedResetRecoversCurrentWindowSample,
             TestResetFutureStartClockSkewDoesNotCrashHistory,
@@ -177,7 +200,7 @@ internal static class Program
         };
         var changed = AppSettingsMigration.Apply(settings);
         Equal(true, changed, "schema 2 应迁移到当前版本");
-        Equal(4, settings.SettingsSchemaVersion, "迁移后设置版本");
+        Equal(AppSettingsMigration.CurrentVersion, settings.SettingsSchemaVersion, "迁移后设置版本");
         Equal(false, settings.EnableOfficialLongContextEstimate, "旧配置迁移后不得默认开启 >272K 对比口径");
         Equal(UiLanguage.Auto, settings.Language, "旧设置默认使用自动系统语言");
         Equal(UiTheme.System, settings.Theme, "旧设置默认使用系统主题");
@@ -185,6 +208,25 @@ internal static class Program
             AppSettingsMigration.DefaultMaximumSampleUsd,
             settings.Regression.MaximumSampleUsd,
             "schema 2 已迁移上限不得再次改变");
+    }
+
+    /// <summary>
+    /// 验证不含模型价格字段的 schema 4 设置会显式补齐内置价格，并可直接构造当前计价配置。
+    /// </summary>
+    private static void TestSettingsSchema4AddsBuiltInModelPrices()
+    {
+        var settings = new AppSettings
+        {
+            SettingsSchemaVersion = 4,
+            ModelPrices = []
+        };
+        var changed = AppSettingsMigration.Apply(settings, modelPricesPresent: false);
+        var catalog = PublicApiPricing.CreateCatalog(settings.ModelPrices);
+
+        Equal(true, changed, "schema 4 缺少价格字段时应执行迁移");
+        Equal(AppSettingsMigration.CurrentVersion, settings.SettingsSchemaVersion, "价格设置迁移后的 schema");
+        Equal(PublicApiPricing.GetBuiltInProfiles().Count, settings.ModelPrices.Count, "迁移后应包含全部内置模型");
+        Equal(PublicApiPricing.PricingVersion, catalog.PricingVersion, "迁移后的价格应保持内置版本");
     }
 
     /// <summary>
@@ -487,10 +529,16 @@ internal static class Program
     /// 在真实 WinForms 句柄和当前 Windows DPI 下渲染总览页 PNG，供发布前人工检查布局与视觉层级。
     /// </summary>
     /// <param name="outputPath">需要写入的 PNG 绝对或相对路径。</param>
-    private static void CaptureDashboard(string outputPath)
+    private static void CaptureDashboard(string outputPath, bool repricing = false)
     {
         using var form = new ChartForm(new AppSettings(), _ => { });
-        form.UpdateView(CreateDashboardPreviewView(), new RegressionOptions { Mode = RegressionMode.GaussianAggregation });
+        var view = CreateDashboardPreviewView();
+        if (repricing) view = view with
+        {
+            ShowingPreviousPrices = true,
+            Status = UiText.Get("RepricingShowingPrevious") + " " + UiText.Get("RepricingArchive") + " 423/1810"
+        };
+        form.UpdateView(view, new RegressionOptions { Mode = RegressionMode.GaussianAggregation });
         form.ShowDashboardTab();
         Application.DoEvents();
 
@@ -502,6 +550,33 @@ internal static class Program
         form.Hide();
         Console.WriteLine(
             $"总览预览已写入：{absolutePath}；窗口 DPI={form.DeviceDpi}，尺寸={form.Width}×{form.Height}");
+    }
+
+    /// <summary>
+    /// 在真实 WinForms 句柄和当前 Windows DPI 下渲染模型价格设置页，供发布前检查滚动、间距和文字完整性。
+    /// </summary>
+    /// <param name="outputPath">需要写入的 PNG 绝对或相对路径。</param>
+    private static void CapturePricingSettings(string outputPath)
+    {
+        var settings = new AppSettings();
+        using var form = new ChartForm(settings, _ => { });
+        form.ShowSettingsTab(settings);
+        Application.DoEvents();
+        var pricingTabs = FindControls<TabControl>(form)
+            .Single(control => control.TabPages.Cast<TabPage>()
+                .Any(page => page.Text == UiText.Get("SettingsPricing")));
+        pricingTabs.SelectedTab = pricingTabs.TabPages.Cast<TabPage>()
+            .Single(page => page.Text == UiText.Get("SettingsPricing"));
+        Application.DoEvents();
+
+        using var bitmap = new Bitmap(form.Width, form.Height);
+        form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+        var absolutePath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+        bitmap.Save(absolutePath, System.Drawing.Imaging.ImageFormat.Png);
+        form.Hide();
+        Console.WriteLine(
+            $"价格设置预览已写入：{absolutePath}；窗口 DPI={form.DeviceDpi}，尺寸={form.Width}×{form.Height}");
     }
 
     /// <summary>
@@ -823,6 +898,326 @@ internal static class Program
     }
 
     /// <summary>
+    /// 验证 Astra 短上下文按官方 Standard 价分别计算未缓存输入、缓存读取、缓存写入和输出。
+    /// </summary>
+    /// <remarks>输入由方法内构造；无返回值，任一价格分项或口径不符合官方价格表时由断言报告失败。</remarks>
+    private static void TestAstraShortContextStandardPricing()
+    {
+        var usage = new TokenUsage(100_000, 50_000, 10_000, 10_000, 2_000);
+        var result = PublicApiPricing.Calculate("gpt-6-astra", "standard", usage);
+        Equal(true, result.Success, "Astra 短上下文应可定价");
+        Near(1.075m, result.StandardCostUsd, 0.000001m, "Astra Standard 短上下文金额");
+        Near(1.075m, result.CostUsd, 0.000001m, "Astra Standard 等价金额");
+        Near(1.075m, result.OfficialLongContextCostUsd, 0.000001m, "Astra 短上下文两种口径应一致");
+        Near(1m, result.CreditMultiplier, 0.000001m, "Astra Standard 额度倍率");
+    }
+
+    /// <summary>
+    /// 验证 Astra 输入超过 272K 后整次请求使用官方长上下文输入、缓存读取、缓存写入和输出价格。
+    /// </summary>
+    /// <remarks>输入由方法内构造；无返回值，基础口径、官方长上下文口径或阈值判断错误时由断言报告失败。</remarks>
+    private static void TestAstraLongContextStandardPricing()
+    {
+        var usage = new TokenUsage(300_000, 200_000, 50_000, 10_000, 2_000);
+        var result = PublicApiPricing.Calculate("gpt-6-astra", "default", usage);
+        Equal(true, result.Success, "Astra 长上下文应可定价");
+        Near(1.825m, result.CostUsd, 0.000001m, "Astra 不含长上下文加价金额");
+        Near(3.4m, result.OfficialLongContextCostUsd, 0.000001m, "Astra 官方长上下文加价金额");
+        Equal(true, result.IsLongContext, "Astra 超过 272K 应标记为长上下文");
+    }
+
+    /// <summary>
+    /// 验证 Astra Fast 使用 Standard API 成本乘以官方 ChatGPT 2.5 倍额度倍率。
+    /// </summary>
+    /// <remarks>输入由方法内构造；无返回值，Standard 基价、Fast 倍率或最终等价金额错误时由断言报告失败。</remarks>
+    private static void TestAstraFastCreditMultiplier()
+    {
+        var usage = new TokenUsage(100_000, 50_000, 10_000, 10_000, 2_000);
+        var result = PublicApiPricing.Calculate("gpt-6-astra", "priority", usage);
+        Equal(true, result.Success, "Astra Fast 应可定价");
+        Near(1.075m, result.StandardCostUsd, 0.000001m, "Astra Fast 响应的 Standard API 成本");
+        Near(2.5m, result.CreditMultiplier, 0.000001m, "Astra Fast 额度倍率");
+        Near(2.6875m, result.CostUsd, 0.000001m, "Astra Standard API 等价金额");
+        Equal("fast", result.NormalizedServiceTier, "Astra priority 应规范化为 fast");
+    }
+
+    /// <summary>
+    /// 验证用户提高 Astra 缓存读取价格后，逐响应金额、持久化往返、价格版本和历史重放条件同步变化。
+    /// </summary>
+    private static void TestCustomAstraCachedPriceRepricesAndVersionsSamples()
+    {
+        var customProfiles = PublicApiPricing.GetBuiltInProfiles()
+            .Select(profile => string.Equals(profile.Model, "gpt-6-astra", StringComparison.OrdinalIgnoreCase)
+                ? profile with
+                {
+                    ShortContext = profile.ShortContext with { CachedInputPerMillion = 2m }
+                }
+                : profile)
+            .Reverse()
+            .ToList();
+        var firstCatalog = PublicApiPricing.CreateCatalog(customProfiles);
+        var json = JsonSerializer.Serialize(new AppSettings { ModelPrices = customProfiles });
+        var restoredSettings = JsonSerializer.Deserialize<AppSettings>(json)
+            ?? throw new InvalidOperationException("自定义模型价格设置反序列化结果为空。");
+        var restoredCatalog = PublicApiPricing.CreateCatalog(restoredSettings.ModelPrices);
+        var result = restoredCatalog.Calculate(
+            "gpt-6-astra",
+            "standard",
+            new TokenUsage(100_000, 100_000, 0, 0, 0));
+        var directory = CreateTemporaryDirectory();
+        var timestamp = DateTimeOffset.UtcNow;
+        File.WriteAllLines(Path.Combine(directory, "rollout-custom-astra.jsonl"),
+        [
+            TurnContextLine(timestamp, "gpt-6-astra", "standard"),
+            ResponseItemLine(timestamp.AddSeconds(1)),
+            TokenCountLine(timestamp.AddSeconds(2), 100_000, 100_000, 0, 0, 0)
+        ]);
+        var scan = new RolloutLogReader(restoredCatalog).ScanNew(
+            directory,
+            new MonitorState { RolloutFilesPrimed = true });
+        var estimatorState = new MonitorState();
+        var resetAt = timestamp.AddDays(7);
+        QuotaEstimator.Process(
+            estimatorState,
+            new RateLimitSnapshot(timestamp, "codex", "Codex", 4m, 10080, resetAt),
+            RolloutScanResult.Empty,
+            0.1m,
+            restoredCatalog.PricingVersion);
+        var update = QuotaEstimator.Process(
+            estimatorState,
+            new RateLimitSnapshot(timestamp.AddSeconds(3), "codex", "Codex", 5m, 10080, resetAt),
+            scan,
+            0.1m,
+            restoredCatalog.PricingVersion);
+        var historicalReader = new RolloutLogReader(restoredCatalog);
+        var historicalFacts = historicalReader.ReadHistoricalFacts(
+            directory,
+            timestamp,
+            timestamp.AddSeconds(3),
+            10080);
+        var historicalSnapshot = new RateLimitSnapshot(
+            timestamp.AddSeconds(3),
+            "codex",
+            "Codex",
+            5m,
+            10080,
+            resetAt);
+        var replay = HistoricalReplayCalculator.Build(
+            historicalSnapshot,
+            historicalFacts,
+            [
+                new(timestamp, "codex", 4m, 10080, resetAt),
+                new(timestamp.AddSeconds(3), "codex", 5m, 10080, resetAt)
+            ]);
+        var sample = new QuotaSample(
+            DateTimeOffset.Now,
+            "codex",
+            1m,
+            1m,
+            result.CostUsd,
+            result.CostUsd * 100,
+            new TokenUsage(100_000, 100_000, 0, 0, 0),
+            1,
+            "gpt-6-astra")
+        {
+            AmountDefinition = PublicApiPricing.AmountDefinition,
+            OfficialLongContextAmountDefinition = PublicApiPricing.OfficialLongContextAmountDefinition,
+            PricingVersion = restoredCatalog.PricingVersion
+        };
+        var state = new MonitorState
+        {
+            HistoricalReplayVersion = HistoricalReplayCalculator.CurrentReplayVersion,
+            HistoricalReplayPricingVersion = PublicApiPricing.PricingVersion
+        };
+
+        Equal(true, result.Success, "自定义 Astra 缓存读取价格应可计价");
+        Near(0.2m, result.CostUsd, 0.000001m, "自定义 Astra 缓存读取金额");
+        Near(0.2m, scan.ApiEquivalentUsd, 0.000001m, "增量日志扫描必须使用自定义价格");
+        Equal(restoredCatalog.PricingVersion, scan.PricingVersion, "扫描结果应携带自定义价格版本");
+        Equal(true, update.SampleCreated, "自定义价格扫描应形成额度样本");
+        Equal(true, SampleRepricer.HasCompleteUsage(update.Sample!), "实时采样必须持久化完整逐响应计价明细");
+        Equal(restoredCatalog.PricingVersion, update.Sample!.PricingVersion, "实时样本应保存自定义价格版本");
+        Equal(restoredCatalog.PricingVersion, historicalFacts.PricingVersion, "历史事实应携带自定义价格版本");
+        Equal(1, replay.Samples.Count, "自定义价格历史事实应重建一个样本");
+        Equal(true, SampleRepricer.HasCompleteUsage(replay.Samples[0]), "历史重放必须补齐可离线重算明细");
+        Equal(restoredCatalog.PricingVersion, replay.Samples[0].PricingVersion, "历史重放样本应保存自定义价格版本");
+        Equal(false, firstCatalog.PricingVersion == PublicApiPricing.PricingVersion, "自定义价格必须生成独立版本");
+        Equal(firstCatalog.PricingVersion, restoredCatalog.PricingVersion, "价格版本不得受列表顺序或 JSON 往返影响");
+        Equal(true, restoredCatalog.IsCurrentSample(sample), "自定义版本样本应进入对应回归口径");
+        Equal(false, PublicApiPricing.IsCurrentSample(sample), "自定义版本样本不得混入内置价格回归");
+        Equal(
+            true,
+            HistoricalReplayCalculator.IsReplayRequired(state, restoredCatalog.PricingVersion),
+            "切换自定义价格后必须触发历史重算");
+    }
+
+    /// <summary>
+    /// 验证价格页专用复位按钮会恢复全部内置模型价格，并保留为等待全局保存的编辑值。
+    /// </summary>
+    private static void TestPricingEditorRestoresBuiltInPrices()
+    {
+        var customProfiles = PublicApiPricing.GetBuiltInProfiles()
+            .Select(profile => string.Equals(profile.Model, "gpt-6-astra", StringComparison.OrdinalIgnoreCase)
+                ? profile with
+                {
+                    ShortContext = profile.ShortContext with { CachedInputPerMillion = 2m }
+                }
+                : profile)
+            .ToArray();
+        using var editor = new PricingEditorPanel();
+        editor.LoadProfiles(customProfiles);
+        var resetButton = FindControls<Button>(editor)
+            .Single(button => button.Name == "RestoreBuiltInPricesButton");
+        resetButton.PerformClick();
+        var restoredProfiles = editor.GetProfiles();
+        var astra = restoredProfiles.Single(profile => profile.Model == "gpt-6-astra");
+
+        Near(1m, astra.ShortContext.CachedInputPerMillion, 0.000001m, "复位后的 Astra 内置缓存读取价格");
+        Equal(
+            PublicApiPricing.PricingVersion,
+            PublicApiPricing.CreateCatalog(restoredProfiles).PricingVersion,
+            "价格专用复位应完整恢复内置价格版本");
+        Equal(
+            UiText.Get("PricingRestoredPending"),
+            FindControls<Label>(editor).Single(label => label.Text == UiText.Get("PricingRestoredPending")).Text,
+            "复位后应明确提示保存后生效");
+    }
+
+    /// <summary>验证混合模型、速度和上下文长度经 JSON 往返后，无原始日志也能按新价格及阈值重算。</summary>
+    private static void TestOfflineRepricingMixedResponsesAfterReload()
+    {
+        var timestamp = DateTimeOffset.Now;
+        ResponsePricingUsage[] details =
+        [
+            new("gpt-6-astra", "standard", new(100_000, 80_000, 1_000, 500, 100)),
+            new("gpt-6-astra", "priority", new(300_000, 200_000, 20_000, 1_000, 300)),
+            new("gpt-5.6-sol", "standard", new(200_000, 100_000, 10_000, 2_000, 500))
+        ];
+        var responses = details.Select((item, index) =>
+        {
+            var pricing = PublicApiPricing.BuiltInCatalog.Calculate(item.Model, item.ServiceTier, item.Usage);
+            return new HistoricalResponseFact(timestamp.AddSeconds(index + 1), "test", item.Model,
+                item.ServiceTier, item.Usage, pricing.Success, pricing.CostUsd,
+                pricing.OfficialLongContextCostUsd, pricing.NormalizedServiceTier, pricing.CreditMultiplier);
+        }).ToArray();
+        var reset = timestamp.AddDays(7);
+        var snapshot = new RateLimitSnapshot(timestamp.AddSeconds(4), "codex", null, 11m, 10080, reset);
+        var replay = HistoricalReplayCalculator.Build(snapshot,
+            new HistoricalRolloutFacts(timestamp, snapshot.SampledAt, responses, [], 1, 0),
+            [new(timestamp, "codex", 10m, 10080, reset), new(snapshot.SampledAt, "codex", 11m, 10080, reset)]);
+        Equal(1, replay.Samples.Count, "混合响应应形成一个区间");
+        var state = JsonSerializer.Deserialize<MonitorState>(JsonSerializer.Serialize(new MonitorState
+        {
+            Samples = replay.Samples.ToList()
+        }))!;
+        var custom = PublicApiPricing.CreateCatalog(PublicApiPricing.GetBuiltInProfiles().Select(profile =>
+            profile.Model == "gpt-6-astra" ? profile with
+            {
+                ShortContext = profile.ShortContext with { CachedInputPerMillion = 3 },
+                LongContextThresholdTokens = 150_000
+            } : profile).ToArray());
+        var result = SampleRepricer.Apply(state, custom);
+        Equal(1, result.PricedIntervals, "无需日志即可重算一个混合区间");
+        Equal(0, result.MissingUsageIntervals, "JSON 往返不得丢明细");
+        Equal(0, result.Errors.Count, "新价格应可完整计算");
+        var sample = state.Samples.Single(custom.IsCurrentSample);
+        var expected = details.Select(item => custom.Calculate(item.Model, item.ServiceTier, item.Usage)).ToArray();
+        Near(expected.Sum(item => item.CostUsd), sample.IntervalApiEquivalentUsd, 0.00000001m, "混合速度和模型按逐响应计价");
+        Near(expected.Sum(item => item.OfficialLongContextCostUsd), sample.OfficialLongContextIntervalApiEquivalentUsd,
+            0.00000001m, "长上下文以每个响应的输入长度判断，不能用区间总长度");
+        SampleRepricer.Apply(state, custom);
+        Equal(2, state.Samples.Count, "重复重算保留一份旧版本和一份新版本");
+        SampleRepricer.Apply(state, PublicApiPricing.BuiltInCatalog);
+        Equal(2, state.Samples.Count, "复位价格不得重复追加原版本");
+        Near(replay.Samples[0].IntervalApiEquivalentUsd,
+            state.Samples.Single(PublicApiPricing.IsCurrentSample).IntervalApiEquivalentUsd, 0.00000001m, "复位应精确还原原金额");
+    }
+
+    /// <summary>验证明细缺失或不完整时保留旧样本，不利用区间总 token 猜测新成本。</summary>
+    private static void TestRepricingRetainsUnrecoverableHistory()
+    {
+        var old = CreateDashboardPreviewView().Samples[0];
+        var partial = old with { Timestamp = old.Timestamp.AddSeconds(1), ModelResponseCount = 2, PricingUsages = [new("gpt-6-astra", "standard", old.Usage)] };
+        var state = new MonitorState { Samples = [old, partial] };
+        var custom = PublicApiPricing.CreateCatalog([new("gpt-6-astra", new(10, 2, 12.5m, 50), new(20, 4, 25, 75), 272_000)]);
+        var result = SampleRepricer.Apply(state, custom);
+        Equal(2, result.MissingUsageIntervals, "缺失或部分明细必须明确报告");
+        Equal(2, state.Samples.Count, "历史不得因为无法重算而被删除");
+        Equal(false, state.Samples.Any(custom.IsCurrentSample), "不可把旧价格金额贴上新版本");
+        var fact = new ResponsePricingUsage("unsupported-model", "standard", new(100, 0, 0, 10, 0));
+        state.Samples = [old with { Usage = fact.Usage, ModelResponseCount = 1, PricingUsages = [fact] }];
+        var failed = SampleRepricer.Apply(state, custom);
+        Equal(1, failed.Errors.Count, "不支持的模型必须保留原始计价失败");
+        Equal(1, state.Samples.Count, "失败不得污染现有金额");
+    }
+
+    /// <summary>通过实际展示构建器验证等待、部分完成和完成后的曲线版本；测试不访问真实配置或自启。</summary>
+    private static void TestPriceSwitchKeepsVisibleCurveUntilReady()
+    {
+        var coordinator = (MonitorCoordinator)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(MonitorCoordinator));
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = typeof(MonitorCoordinator);
+        var previous = CreateDashboardPreviewView();
+        var catalog = PublicApiPricing.CreateCatalog([new("gpt-6-astra", new(10, 2, 12.5m, 50), new(20, 4, 25, 75), 272_000)]);
+        var state = new MonitorState { Samples = previous.Samples.ToList(), HistoricalReplayPricingVersion = previous.PricingVersion };
+        type.GetField("_state", flags)!.SetValue(coordinator, state);
+        type.GetField("_pricingCatalog", flags)!.SetValue(coordinator, catalog);
+        type.GetField("<Settings>k__BackingField", flags)!.SetValue(coordinator, new AppSettings());
+        var build = type.GetMethod("BuildView", flags)!;
+        var restarted = (MonitorViewSnapshot)build.Invoke(coordinator, ["waiting"] )!;
+        Equal(true, restarted.ShowingPreviousPrices, "改价中重启仍应标注并展示旧曲线");
+        Equal(previous.SampleCount, restarted.SampleCount, "等待期间历史数量不得归零");
+        Equal(true, restarted.RegressionCurve.Count > 0, "等待期间曲线应保留");
+        type.GetField("_retainedPricingView", flags)!.SetValue(coordinator, restarted);
+        type.GetField("_priceRebuildPending", flags)!.SetValue(coordinator, true);
+        state.Samples.Add(previous.Samples[0] with { PricingVersion = catalog.PricingVersion });
+        var partial = (MonitorViewSnapshot)build.Invoke(coordinator, ["replaying"] )!;
+        Equal(previous.SampleCount, partial.SampleCount, "部分新结果不得提前替换完整旧曲线");
+        type.GetField("_priceRebuildPending", flags)!.SetValue(coordinator, false);
+        var completed = (MonitorViewSnapshot)build.Invoke(coordinator, ["completed"] )!;
+        Equal(false, completed.ShowingPreviousPrices, "完成后切换新价格结果");
+        Equal(1, completed.SampleCount, "新旧版本不得混合回归");
+        type.GetField("_polling", flags)!.SetValue(coordinator, true);
+        coordinator.RefreshNowAsync().GetAwaiter().GetResult();
+        Equal(true, (bool)type.GetField("_refreshQueued", flags)!.GetValue(coordinator)!, "繁忙期间最新请求应排队而非丢失");
+        using var form = new ChartForm(new AppSettings(), _ => { });
+        form.UpdateView(partial, new RegressionOptions());
+        Equal(true, FindControls<StatusStrip>(form).Single().Items[0].Text!.Contains("旧价格"), "各标签页均可看到旧价格状态");
+    }
+
+    /// <summary>验证历史扫描提供确定文件进度，并在换价取消后停止，随后新扫描仍能完整提取。</summary>
+    private static void TestHistoricalScanCancellationAndProgress()
+    {
+        var directory = CreateTemporaryDirectory();
+        var timestamp = DateTimeOffset.UtcNow;
+        File.WriteAllLines(Path.Combine(directory, "rollout-progress.jsonl"),
+        [TurnContextLine(timestamp, "gpt-6-astra", "standard"), ResponseItemLine(timestamp.AddSeconds(1)),
+            TokenCountLine(timestamp.AddSeconds(2), 1000, 500, 0, 100, 0)]);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var cancelled = false;
+        try
+        {
+            new RolloutLogReader().ReadHistoricalFacts(directory, timestamp, timestamp.AddSeconds(3), 10080, cancellation.Token);
+        }
+        catch (OperationCanceledException) { cancelled = true; }
+        Equal(true, cancelled, "过时扫描必须取消，不能返回伪成功空结果");
+        var progress = new ScanProgress();
+        var facts = new RolloutLogReader().ReadHistoricalFacts(directory, timestamp, timestamp.AddSeconds(3), 10080, default, progress);
+        Equal(1, facts.Responses.Count, "取消后最新扫描应正常完成");
+        Equal((0, 1), progress.Values[0], "开始时报告文件总数");
+        Equal((1, 1), progress.Values[^1], "结束时报告全部完成");
+    }
+
+    /// <summary>同步记录测试扫描进度，避免消息循环调度影响取消与完成断言。</summary>
+    private sealed class ScanProgress : IProgress<(int Completed, int Total)>
+    {
+        public List<(int Completed, int Total)> Values { get; } = [];
+        /// <summary>收集扫描器的业务进度通知。</summary>
+        public void Report((int Completed, int Total) value) => Values.Add(value);
+    }
+
+    /// <summary>
     /// 验证 Sol 短上下文按当前 Standard 价分别计算未缓存、缓存读、缓存写和输出。
     /// </summary>
     private static void TestShortContextStandardPricing()
@@ -961,6 +1356,52 @@ internal static class Program
         var snapshot = RateLimitParser.Parse(document.RootElement, string.Empty, 1440, DateTimeOffset.Now);
         Equal(10080, snapshot!.WindowDurationMinutes, "应选择一周窗口");
         Near(34.25m, snapshot.UsedPercent, 0.000001m, "周窗口百分比");
+    }
+
+    /// <summary>
+    /// 使用包含主 Codex、保留模型和 Spark 的真实多桶形态，验证自动选择不会在等长窗口下误选其他额度桶。
+    /// </summary>
+    /// <remarks>输入由方法内构造；无返回值，默认选择或显式覆盖不符合预期时由断言报告失败。</remarks>
+    private static void TestAutomaticWeeklyWindowPrefersCodexBucket()
+    {
+        using var document = JsonDocument.Parse("""
+        {
+          "rateLimitsByLimitId": {
+            "base_model_inference": {
+              "limitId": "base_model_inference",
+              "limitName": "gpt-reserve",
+              "primary": { "usedPercent": 0, "windowDurationMins": 10080, "resetsAt": 1789001514 }
+            },
+            "codex": {
+              "limitId": "codex",
+              "primary": { "usedPercent": 69, "windowDurationMins": 10080, "resetsAt": 1788748179 }
+            },
+            "codex_bengalfox": {
+              "limitId": "codex_bengalfox",
+              "limitName": "GPT-5.3-Codex-Spark",
+              "primary": { "usedPercent": 0, "windowDurationMins": 300, "resetsAt": 1788414714 },
+              "secondary": { "usedPercent": 0, "windowDurationMins": 10080, "resetsAt": 1789001514 }
+            }
+          },
+          "rateLimits": {
+            "limitId": "codex",
+            "primary": { "usedPercent": 69, "windowDurationMins": 10080, "resetsAt": 1788748179 }
+          }
+        }
+        """);
+
+        var automatic = RateLimitParser.Parse(document.RootElement, string.Empty, 1440, DateTimeOffset.Now);
+        Equal("codex", automatic!.LimitId, "空配置时应优先选择 Codex 主额度桶");
+        Near(69m, automatic.UsedPercent, 0.000001m, "自动选择应返回 Codex UI 对应的周额度百分比");
+        Equal(10080, automatic.WindowDurationMinutes, "自动选择仍应使用周窗口");
+
+        var explicitReserve = RateLimitParser.Parse(
+            document.RootElement,
+            "base_model_inference",
+            1440,
+            DateTimeOffset.Now);
+        Equal("base_model_inference", explicitReserve!.LimitId, "显式额度桶设置应继续覆盖默认优先级");
+        Near(0m, explicitReserve.UsedPercent, 0.000001m, "显式额度桶应返回其自身百分比");
     }
 
     /// <summary>
@@ -1835,26 +2276,31 @@ internal static class Program
         var facts = new HistoricalRolloutFacts(
             historyStart,
             currentWindowStart,
-            [HistoricalPricedResponse(historyStart.AddHours(2), 3m)],
+            [HistoricalPricedResponse(historyStart.AddHours(2), 3m), HistoricalPricedResponse(historyStart.AddHours(5), 2m)],
             [
                 new HistoricalRateLimitCheckpoint(historyStart.AddHours(1), 0m, 10080, resetAt),
-                new HistoricalRateLimitCheckpoint(historyStart.AddHours(3), 1m, 10080, resetAt)
+                new HistoricalRateLimitCheckpoint(historyStart.AddHours(3), 1m, 10080, resetAt),
+                new HistoricalRateLimitCheckpoint(historyStart.AddHours(4), 2m, 10080, resetAt),
+                new HistoricalRateLimitCheckpoint(historyStart.AddHours(6), 3m, 10080, resetAt)
             ],
             1,
             0);
         var replay = HistoricalArchiveReplayCalculator.Build("codex", 10080, facts, currentWindowStart);
         var uncovered = CurrentSample(historyStart.AddMinutes(30), 900m);
-        var covered = CurrentSample(historyStart.AddHours(3), 800m);
-        var state = new MonitorState { Samples = [uncovered, covered] };
+        var covered = CurrentSample(historyStart.AddHours(3), 800m) with { UsedPercent = 1m };
+        var gap = CurrentSample(historyStart.AddHours(4), 850m) with { UsedPercent = 2m };
+        var state = new MonitorState { Samples = [uncovered, covered, gap] };
         var roots = new[] { @"C:\fixture\.codex\sessions", @"C:\fixture\.codex\archived_sessions" };
 
         HistoricalArchiveReplayCalculator.ApplyToState(state, replay, 90, roots);
+        HistoricalArchiveReplayCalculator.ApplyToState(state, replay, 90, roots);
 
-        Equal(2, state.Samples.Count, "成功覆盖区间应替换旧样本，同时保留区间外样本");
+        Equal(4, state.Samples.Count, "重复重放应保留窗口外和窗口内部未覆盖样本，并更新两个成功区间");
+        Equal(true, state.Samples.Contains(gap), "位于成功重放时间范围内部的未覆盖百分比样本不得被删除");
         Equal(true, state.Samples.Contains(uncovered), "首个可信百分比之前的实时样本不得被删除");
         Equal(false, state.Samples.Contains(covered), "成功重建时间段内的旧实时样本应被替换");
         Equal(1, state.HistoricalArchiveReplayWindowCount, "应持久化一个已重建旧窗口");
-        Equal(1, state.HistoricalArchiveReplaySampleCount, "应持久化一个旧窗口样本");
+        Equal(2, state.HistoricalArchiveReplaySampleCount, "应持久化两个成功重建样本");
         Equal(
             false,
             HistoricalArchiveReplayCalculator.IsReplayRequired(state, 90, roots),

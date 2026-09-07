@@ -7,7 +7,7 @@ namespace WeeklyQuotaMonitor.Core;
 /// </summary>
 public static class HistoricalReplayCalculator
 {
-    public const int CurrentReplayVersion = 6;
+    public const int CurrentReplayVersion = 7;
     public const string HistoricalSampleSource = "historical-replay";
     private static readonly TimeSpan ResetClusterTolerance = TimeSpan.FromMinutes(1);
 
@@ -17,6 +17,15 @@ public static class HistoricalReplayCalculator
     /// <param name="state">当前监控状态。</param>
     /// <returns>重放算法或价格版本未完成时返回 true。</returns>
     public static bool IsReplayRequired(MonitorState state)
+        => IsReplayRequired(state, PublicApiPricing.PricingVersion);
+
+    /// <summary>
+    /// 判断持久化状态是否需要按当前重放算法和指定价格配置重新构建历史样本。
+    /// </summary>
+    /// <param name="state">当前监控状态。</param>
+    /// <param name="pricingVersion">当前生效价格配置的稳定版本。</param>
+    /// <returns>重放算法或价格版本未完成时返回 true。</returns>
+    public static bool IsReplayRequired(MonitorState state, string pricingVersion)
     {
         if (state.HistoricalReplayVersion > CurrentReplayVersion)
         {
@@ -27,7 +36,7 @@ public static class HistoricalReplayCalculator
         return state.HistoricalReplayVersion != CurrentReplayVersion ||
                !string.Equals(
                    state.HistoricalReplayPricingVersion,
-                   PublicApiPricing.PricingVersion,
+                   pricingVersion,
                    StringComparison.Ordinal);
     }
 
@@ -126,7 +135,10 @@ public static class HistoricalReplayCalculator
             awaitingLogIntervals,
             unattributedUsedPercents,
             unresolvedSourceFiles,
-            facts.MalformedLineCount);
+            facts.MalformedLineCount)
+        {
+            PricingVersion = facts.PricingVersion
+        };
     }
 
     /// <summary>
@@ -144,7 +156,7 @@ public static class HistoricalReplayCalculator
             })
             .ToArray();
         state.Samples.RemoveAll(sample =>
-            PublicApiPricing.IsCurrentSample(sample) &&
+            PublicApiPricing.IsSampleForVersion(sample, result.PricingVersion) &&
             string.Equals(sample.LimitId, result.LimitId, StringComparison.Ordinal) &&
             sample.Timestamp >= result.WindowStart &&
             sample.Timestamp <= result.WindowEnd &&
@@ -154,7 +166,7 @@ public static class HistoricalReplayCalculator
         state.Samples.AddRange(result.Samples);
         state.Samples.Sort((left, right) => left.Timestamp.CompareTo(right.Timestamp));
         state.HistoricalReplayVersion = CurrentReplayVersion;
-        state.HistoricalReplayPricingVersion = PublicApiPricing.PricingVersion;
+        state.HistoricalReplayPricingVersion = result.PricingVersion;
         state.HistoricalReplayCompletedAt = DateTimeOffset.Now;
         state.HistoricalReplayCandidateCheckpoints = result.CandidateCheckpointCount;
         state.HistoricalReplayAcceptedCheckpoints = result.AcceptedCheckpointCount;
@@ -262,7 +274,12 @@ public static class HistoricalReplayCalculator
                 continue;
             }
 
-            samples.Add(BuildSample(snapshot, checkpoint, deltaPercent, intervalResponses));
+            samples.Add(BuildSample(
+                snapshot,
+                checkpoint,
+                deltaPercent,
+                intervalResponses,
+                facts.PricingVersion));
             previousPercent = checkpoint.UsedPercent;
             previousBoundary = checkpoint.Timestamp;
         }
@@ -279,12 +296,14 @@ public static class HistoricalReplayCalculator
     /// <param name="checkpoint">区间结束的百分比观察点。</param>
     /// <param name="deltaPercent">本区间额度百分比增量。</param>
     /// <param name="responses">区间内全部已定价响应。</param>
+    /// <param name="pricingVersion">生成响应金额的不可变价格配置版本。</param>
     /// <returns>历史重放来源的当前价格版本样本。</returns>
     private static QuotaSample BuildSample(
         RateLimitSnapshot snapshot,
         HistoricalRateLimitCheckpoint checkpoint,
         decimal deltaPercent,
-        IReadOnlyList<HistoricalResponseFact> responses)
+        IReadOnlyList<HistoricalResponseFact> responses,
+        string pricingVersion)
     {
         var usage = responses.Aggregate(TokenUsage.Zero, (total, response) => total.Add(response.Usage));
         var cost = responses.Sum(response => response.ApiEquivalentUsd);
@@ -316,10 +335,12 @@ public static class HistoricalReplayCalculator
             OfficialLongContextIntervalApiEquivalentUsd = officialLongContextCost,
             OfficialLongContextEstimatedWeeklyQuotaUsd = officialLongContextCost * 100m / deltaPercent,
             OfficialLongContextAmountDefinition = PublicApiPricing.OfficialLongContextAmountDefinition,
-            PricingVersion = PublicApiPricing.PricingVersion,
+            PricingVersion = pricingVersion,
             ServiceTiers = string.Join(", ", tiers),
             CreditMultipliers = string.Join(", ", multipliers),
-            SampleSource = HistoricalSampleSource
+            SampleSource = HistoricalSampleSource,
+            PricingUsages = responses.Select(response =>
+                new ResponsePricingUsage(response.Model, response.ServiceTier, response.Usage)).ToArray()
         };
     }
 

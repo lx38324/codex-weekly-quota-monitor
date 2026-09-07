@@ -9,13 +9,20 @@ namespace WeeklyQuotaMonitor;
 public sealed class MonitorCoordinator : IAsyncDisposable
 {
     private readonly JsonStorage _storage;
-    private readonly RolloutLogReader _rolloutReader;
+    private RolloutLogReader _rolloutReader;
+    private PricingCatalog _pricingCatalog;
     private readonly SynchronizationContext _uiContext;
     private readonly System.Windows.Forms.Timer _pollTimer;
     private CodexAppServerClient? _appServer;
     private FileSystemWatcher? _rolloutWatcher;
     private volatile bool _rolloutFilesChanged;
     private bool _polling;
+    private bool _refreshQueued;
+    private CancellationTokenSource? _replayCancellation;
+    private MonitorViewSnapshot? _retainedPricingView;
+    private bool _priceRebuildPending;
+    private string _repricingNote = string.Empty;
+    private string? _repriceSourceVersion;
     private bool _notificationProcessing;
     private bool _disposed;
     private bool _restartConnectionRequested;
@@ -38,9 +45,10 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     {
         _uiContext = uiContext;
         _storage = new JsonStorage();
-        _rolloutReader = new RolloutLogReader();
         Settings = _storage.LoadSettings();
-        _state = _storage.LoadState();
+        _pricingCatalog = PublicApiPricing.CreateCatalog(Settings.ModelPrices);
+        _rolloutReader = new RolloutLogReader(_pricingCatalog);
+        _state = _storage.LoadState(_pricingCatalog.PricingVersion);
         _pollTimer = new System.Windows.Forms.Timer();
         _pollTimer.Tick += PollTimerTick;
         CurrentView = BuildView("正在启动监控。");
@@ -96,8 +104,13 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     /// </summary>
     public async Task RefreshNowAsync()
     {
-        if (_polling || _disposed)
+        if (_disposed)
         {
+            return;
+        }
+        if (_polling || _notificationProcessing)
+        {
+            _refreshQueued = true;
             return;
         }
 
@@ -134,7 +147,18 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         finally
         {
             _polling = false;
+            ScheduleQueuedRefresh();
         }
+    }
+
+    /// <summary>
+    /// 当前工作释放互斥标志后立即处理最后一次查询请求，避免改价期间的请求被静默丢弃。
+    /// </summary>
+    private void ScheduleQueuedRefresh()
+    {
+        if (!_refreshQueued || _disposed || _polling || _notificationProcessing) return;
+        _refreshQueued = false;
+        _uiContext.Post(async _ => await RefreshNowAsync(), null);
     }
 
     /// <summary>
@@ -259,6 +283,11 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     /// <param name="settings">设置窗口提交的新设置。</param>
     public void ApplySettings(AppSettings settings)
     {
+        var pricingCatalog = PublicApiPricing.CreateCatalog(settings.ModelPrices);
+        var pricingChanged = !string.Equals(
+            _pricingCatalog.PricingVersion,
+            pricingCatalog.PricingVersion,
+            StringComparison.Ordinal);
         _storage.SaveSettings(settings);
         AutostartManager.Apply(settings.StartWithWindows);
         var sessionRootChanged =
@@ -268,6 +297,28 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             !string.Equals(Settings.CodexArguments, settings.CodexArguments, StringComparison.Ordinal) ||
             sessionRootChanged;
         Settings = settings;
+        if (pricingChanged)
+        {
+            _replayCancellation?.Cancel();
+            if (CurrentView.SampleCount > 0) _retainedPricingView = CurrentView;
+            _repriceSourceVersion = CurrentView.PricingVersion;
+            _priceRebuildPending = true;
+            _pricingCatalog = pricingCatalog;
+            _rolloutReader = new RolloutLogReader(_pricingCatalog);
+            QuotaEstimator.ResetIncompatiblePendingInterval(_state, _pricingCatalog.PricingVersion);
+            var repriced = SampleRepricer.Apply(_state, _pricingCatalog, _repriceSourceVersion);
+            _repricingNote = FormatRepricingResult(repriced);
+            if (repriced.MissingUsageIntervals == 0 && repriced.Errors.Count == 0)
+            {
+                // 只有已完成的同算法历史才允许复用覆盖范围；首次升级仍会扫描补齐明细。
+                _state.HistoricalReplayPricingVersion = _pricingCatalog.PricingVersion;
+                _state.HistoricalArchiveReplayPricingVersion = _pricingCatalog.PricingVersion;
+                _priceRebuildPending = false;
+                _retainedPricingView = null;
+            }
+            _storage.SaveState(_state);
+        }
+
         _pollTimer.Interval = checked(Settings.PollIntervalSeconds * 1000);
         if (sessionRootChanged)
         {
@@ -276,13 +327,18 @@ public sealed class MonitorCoordinator : IAsyncDisposable
 
         if (protocolChanged)
         {
+            _replayCancellation?.Cancel();
             _restartConnectionRequested = true;
             _nextReconnectAttempt = DateTimeOffset.MinValue;
         }
 
-        PublishView(protocolChanged
-            ? "设置已保存；协议或路径变化将在下一轮轮询自动重建连接。"
-            : "设置已保存并应用。");
+        PublishView((protocolChanged, pricingChanged) switch
+        {
+            (true, true) => "设置已保存；连接参数与模型价格将在下一轮轮询重建并重算历史。",
+            (true, false) => "设置已保存；协议或路径变化将在下一轮轮询自动重建连接。",
+            (false, true) => "设置已保存；已尝试离线重算，缺失明细将在额度查询成功后补录。",
+            _ => "设置已保存并应用。"
+        });
     }
 
     /// <summary>
@@ -325,6 +381,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         finally
         {
             _notificationProcessing = false;
+            ScheduleQueuedRefresh();
         }
     }
 
@@ -365,7 +422,12 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         var scan = QuotaEstimator.RequiresRolloutScan(_state, snapshot)
             ? _rolloutReader.ScanNew(Settings.SessionRoot, _state, scanStart)
             : RolloutScanResult.Empty;
-        var update = QuotaEstimator.Process(_state, snapshot, scan, Settings.MinimumPercentDelta);
+        var update = QuotaEstimator.Process(
+            _state,
+            snapshot,
+            scan,
+            Settings.MinimumPercentDelta,
+            _pricingCatalog.PricingVersion);
         var replayStatus = await ReplayHistoryIfRequiredAsync(snapshot, authoritativeTimelineChanged);
         _lastRateLimit = snapshot;
         PruneExpiredSamples();
@@ -382,92 +444,106 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         RateLimitSnapshot snapshot,
         bool authoritativeTimelineChanged)
     {
-        var historicalRoots = RolloutLogReader.DiscoverHistoricalSessionRoots(Settings.SessionRoot);
-        var archiveReplayRequired = HistoricalArchiveReplayCalculator.IsReplayRequired(
-            _state,
-            Settings.ChartHistoryDays,
-            historicalRoots);
-        var trackedUnresolvedFileChanged = RolloutLogReader.HaveTrackedFilesChanged(
-            _state.HistoricalReplayUnresolvedFileLengths);
-        var delayedLogMayHaveArrived =
-            _rolloutFilesChanged && _state.HistoricalReplayAwaitingLogIntervals > 0;
+        var roots = RolloutLogReader.DiscoverHistoricalSessionRoots(Settings.SessionRoot);
+        var catalog = _pricingCatalog;
+        var historyDays = Settings.ChartHistoryDays;
+        var sessionRoot = Settings.SessionRoot;
+        var archiveRequired = HistoricalArchiveReplayCalculator.IsReplayRequired(
+            _state, historyDays, roots, catalog.PricingVersion);
+        var currentRequired = HistoricalReplayCalculator.IsReplayRequired(_state, catalog.PricingVersion) ||
+            authoritativeTimelineChanged ||
+            RolloutLogReader.HaveTrackedFilesChanged(_state.HistoricalReplayUnresolvedFileLengths) ||
+            (_rolloutFilesChanged && _state.HistoricalReplayAwaitingLogIntervals > 0);
         _rolloutFilesChanged = false;
-        var currentReplayRequired = HistoricalReplayCalculator.IsReplayRequired(_state) ||
-                                    authoritativeTimelineChanged ||
-                                    trackedUnresolvedFileChanged ||
-                                    delayedLogMayHaveArrived;
-        if (!archiveReplayRequired && !currentReplayRequired)
+        if (!archiveRequired && !currentRequired)
         {
+            _priceRebuildPending = false;
             return string.Empty;
         }
 
+        using var cancellation = new CancellationTokenSource();
+        _replayCancellation = cancellation;
+        var token = cancellation.Token;
         var statuses = new List<string>();
         var windowStart = QuotaEstimator.GetEffectiveWindowStart(snapshot);
-        if (archiveReplayRequired)
+        try
         {
-            var historyStart = DateTimeOffset.Now.AddDays(-Settings.ChartHistoryDays);
-            HistoricalArchiveReplayResult archiveReplay;
-            if (historyStart < windowStart)
+            if (currentRequired)
             {
-                archiveReplay = await Task.Run(() =>
-                {
-                    var facts = new RolloutLogReader().ReadHistoricalFacts(
-                        historicalRoots,
-                        historyStart,
-                        windowStart,
-                        snapshot.WindowDurationMinutes);
-                    return HistoricalArchiveReplayCalculator.Build(
-                        snapshot.LimitId,
-                        snapshot.WindowDurationMinutes,
-                        facts,
-                        windowStart);
-                });
-            }
-            else
-            {
-                archiveReplay = new(
-                    historyStart,
-                    windowStart,
-                    snapshot.LimitId,
-                    [],
-                    0,
-                    0);
+                PublishView(UiText.Get("RepricingCurrent"));
+                var progress = CreateReplayProgress("RepricingCurrent", cancellation);
+                var facts = await Task.Run(() => new RolloutLogReader(catalog).ReadHistoricalFacts(
+                    sessionRoot, windowStart, snapshot.SampledAt, snapshot.WindowDurationMinutes, token, progress), token);
+                token.ThrowIfCancellationRequested();
+                var replay = HistoricalReplayCalculator.Build(snapshot, facts, _state.AuthoritativeRateLimitCheckpoints);
+                HistoricalReplayCalculator.ApplyToState(_state, replay);
+                _state.HistoricalReplayUnresolvedFileLengths = RolloutLogReader.CaptureFileLengths(replay.UnresolvedSourceFiles);
+                _storage.SaveState(_state);
+                statuses.Add($"当前周重放生成 {replay.Samples.Count} 个样本，未归因区间 {replay.UnattributedIntervalCount}；");
             }
 
-            HistoricalArchiveReplayCalculator.ApplyToState(
-                _state,
-                archiveReplay,
-                Settings.ChartHistoryDays,
-                historicalRoots);
-            statuses.Add(
-                $"旧窗口重建 {archiveReplay.Windows.Count} 周、" +
-                $"{archiveReplay.Windows.Sum(window => window.Samples.Count)} 个样本，" +
-                $"扫描 {archiveReplay.FilesScanned} 个活动/归档日志；");
-        }
+            if (archiveRequired)
+            {
+                PublishView(UiText.Get("RepricingArchive"));
+                var historyStart = DateTimeOffset.Now.AddDays(-historyDays);
+                var progress = CreateReplayProgress("RepricingArchive", cancellation);
+                var archive = historyStart < windowStart
+                    ? await Task.Run(() =>
+                    {
+                        var facts = new RolloutLogReader(catalog).ReadHistoricalFacts(
+                            roots, historyStart, windowStart, snapshot.WindowDurationMinutes, token, progress);
+                        token.ThrowIfCancellationRequested();
+                        return HistoricalArchiveReplayCalculator.Build(snapshot.LimitId, snapshot.WindowDurationMinutes, facts, windowStart);
+                    }, token)
+                    : new HistoricalArchiveReplayResult(historyStart, windowStart, snapshot.LimitId, [], 0, 0)
+                    { PricingVersion = catalog.PricingVersion };
+                token.ThrowIfCancellationRequested();
+                HistoricalArchiveReplayCalculator.ApplyToState(_state, archive, historyDays, roots);
+                _storage.SaveState(_state);
+                statuses.Add($"旧窗口重建 {archive.Windows.Count} 周、{archive.Windows.Sum(window => window.Samples.Count)} 个样本；");
+            }
 
-        if (!currentReplayRequired)
-        {
+            if (_priceRebuildPending)
+            {
+                var repriced = SampleRepricer.Apply(_state, catalog, _repriceSourceVersion);
+                _repricingNote = FormatRepricingResult(repriced);
+                _priceRebuildPending = false;
+                if (_state.Samples.Any(catalog.IsCurrentSample)) _retainedPricingView = null;
+            }
             return string.Concat(statuses);
         }
-
-        var facts = await Task.Run(() => new RolloutLogReader().ReadHistoricalFacts(
-            Settings.SessionRoot,
-            windowStart,
-            snapshot.SampledAt,
-            snapshot.WindowDurationMinutes));
-        var replay = HistoricalReplayCalculator.Build(
-            snapshot,
-            facts,
-            _state.AuthoritativeRateLimitCheckpoints);
-        HistoricalReplayCalculator.ApplyToState(_state, replay);
-        _state.HistoricalReplayUnresolvedFileLengths =
-            RolloutLogReader.CaptureFileLengths(replay.UnresolvedSourceFiles);
-        statuses.Add(
-            $"当前周重放生成 {replay.Samples.Count} 个样本，接受 {replay.AcceptedCheckpointCount} 个额度点，" +
-            $"排除或去重 {replay.RejectedCheckpointCount} 个候选，未归因区间 {replay.UnattributedIntervalCount}，" +
-            $"待日志补齐 {replay.AwaitingLogIntervalCount}；");
-        return string.Concat(statuses);
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // 只有用户换价或退出触发的取消才在此处理；实际扫描失败仍沿原异常路径报告。
+            if (!_disposed) _refreshQueued = true;
+            return UiText.Get("RepricingCancelled");
+        }
+        finally
+        {
+            if (ReferenceEquals(_replayCancellation, cancellation)) _replayCancellation = null;
+        }
     }
+
+    /// <summary>
+    /// 创建最多每秒一次的文件扫描进度；过时任务的已排队通知不得覆盖最新价格界面。
+    /// </summary>
+    private IProgress<(int Completed, int Total)> CreateReplayProgress(string labelKey, CancellationTokenSource owner)
+    {
+        var lastUpdate = DateTimeOffset.MinValue;
+        return new Progress<(int Completed, int Total)>(value =>
+        {
+            if (_disposed || !ReferenceEquals(_replayCancellation, owner) || owner.IsCancellationRequested) return;
+            var now = DateTimeOffset.Now;
+            if (value.Completed != value.Total && now - lastUpdate < TimeSpan.FromSeconds(1)) return;
+            lastUpdate = now;
+            PublishView($"{UiText.Get(labelKey)} {value.Completed}/{value.Total}");
+        });
+    }
+
+    /// <summary>汇总离线重算的成功、缺失明细和失败原因，明确区分扫描结束与全部覆盖。</summary>
+    private static string FormatRepricingResult(RepricingResult result) =>
+        UiText.Format("RepricingCoverage", result.PricedIntervals, result.MissingUsageIntervals, result.Errors.Count) +
+        (result.Errors.Count > 0 ? " " + string.Join(" ", result.Errors.Take(3)) : string.Empty);
 
     /// <summary>
     /// 监听 sessions 目录中新建和追加的 JSONL，供待日志或待层级区间在下一次额度查询时按需重放。
@@ -533,10 +609,38 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     private MonitorViewSnapshot BuildView(string status)
     {
         var allSamples = _state.Samples.OrderBy(sample => sample.Timestamp).ToArray();
-        var samples = allSamples.Where(PublicApiPricing.IsCurrentSample).ToArray();
-        var curve = RegressionCalculator.BuildCurve(samples, Settings.Regression);
+        var samples = allSamples.Where(_pricingCatalog.IsCurrentSample).ToArray();
+        var displayedVersion = _pricingCatalog.PricingVersion;
+        if (_retainedPricingView is not null && (_priceRebuildPending || samples.Length == 0))
+        {
+            samples = _retainedPricingView.Samples.ToArray();
+            displayedVersion = _retainedPricingView.PricingVersion;
+        }
+        else if (samples.Length == 0 && allSamples.Length > 0)
+        {
+            // 重启发生在换价与扫描完成之间时，也保留持久化的旧价格结果供用户查看。
+            var previous = allSamples.Where(sample => !string.IsNullOrEmpty(sample.PricingVersion))
+                .GroupBy(sample => sample.PricingVersion)
+                .OrderByDescending(group => group.Key == _state.HistoricalReplayPricingVersion)
+                .ThenByDescending(group => group.Max(sample => sample.Timestamp)).FirstOrDefault();
+            if (previous is not null)
+            {
+                samples = previous.ToArray();
+                displayedVersion = previous.Key;
+            }
+        }
+        if (displayedVersion != _pricingCatalog.PricingVersion)
+            status = UiText.Get("RepricingShowingPrevious") + " " + status;
+        if (!string.IsNullOrEmpty(_repricingNote)) status += " " + _repricingNote;
+        var curve = RegressionCalculator.BuildCurve(
+            samples,
+            Settings.Regression,
+            displayedVersion);
         var officialLongContextCurve =
-            RegressionCalculator.BuildOfficialLongContextCurve(samples, Settings.Regression);
+            RegressionCalculator.BuildOfficialLongContextCurve(
+                samples,
+                Settings.Regression,
+                displayedVersion);
         return new(
             DateTimeOffset.Now,
             status,
@@ -548,6 +652,8 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             samples,
             curve)
         {
+            PricingVersion = displayedVersion,
+            ShowingPreviousPrices = displayedVersion != _pricingCatalog.PricingVersion,
             OfficialLongContextEstimatedWeeklyQuotaUsd =
                 RegressionCalculator.CurrentEstimate(officialLongContextCurve),
             OfficialLongContextRegressionCurve = officialLongContextCurve,
@@ -582,6 +688,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _disposed = true;
+        _replayCancellation?.Cancel();
         _pollTimer.Stop();
         _pollTimer.Dispose();
         _rolloutWatcher?.Dispose();

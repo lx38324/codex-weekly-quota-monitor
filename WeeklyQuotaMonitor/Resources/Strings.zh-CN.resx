@@ -75,6 +75,7 @@
   <data name="SettingsDataSource" xml:space="preserve"><value>数据源</value></data>
   <data name="SettingsSampling" xml:space="preserve"><value>采样</value></data>
   <data name="SettingsEstimation" xml:space="preserve"><value>估算</value></data>
+  <data name="SettingsPricing" xml:space="preserve"><value>模型价格</value></data>
   <data name="SettingsAppearance" xml:space="preserve"><value>外观</value></data>
   <data name="SettingsAdvanced" xml:space="preserve"><value>高级</value></data>
   <data name="SettingsLanguage" xml:space="preserve"><value>语言</value></data>
@@ -102,6 +103,20 @@
   <data name="SettingsMaximumSample" xml:space="preserve"><value>有效样本金额上限（USD）</value></data>
   <data name="SettingsOfficialLongContext" xml:space="preserve"><value>附加金额口径</value></data>
   <data name="SettingsOfficialLongContextOption" xml:space="preserve"><value>启用官方 &gt;272K 长上下文加价对比</value></data>
+  <data name="PricingDescription" xml:space="preserve"><value>选择模型并修改 Standard API 等价单价，单位为 USD/百万 token。保存后会按新价格重算当前周与保留期历史；Auto-review 继续使用 Luna 价格。</value></data>
+  <data name="PricingModel" xml:space="preserve"><value>模型</value></data>
+  <data name="PricingShortContext" xml:space="preserve"><value>短上下文价格（USD / 1M token）</value></data>
+  <data name="PricingLongContext" xml:space="preserve"><value>长上下文价格（USD / 1M token）</value></data>
+  <data name="PricingLongPricing" xml:space="preserve"><value>长上下文档位</value></data>
+  <data name="PricingLongEnabled" xml:space="preserve"><value>启用长上下文价格</value></data>
+  <data name="PricingThreshold" xml:space="preserve"><value>长上下文阈值（输入 token）</value></data>
+  <data name="PricingInput" xml:space="preserve"><value>未缓存输入</value></data>
+  <data name="PricingCachedInput" xml:space="preserve"><value>缓存读取</value></data>
+  <data name="PricingCacheWrite" xml:space="preserve"><value>缓存写入</value></data>
+  <data name="PricingOutput" xml:space="preserve"><value>输出</value></data>
+  <data name="PricingCacheWriteEnabled" xml:space="preserve"><value>启用</value></data>
+  <data name="PricingRestoreBuiltIn" xml:space="preserve"><value>恢复内置价格</value></data>
+  <data name="PricingRestoredPending" xml:space="preserve"><value>已恢复内置价格，点击“保存并应用”后生效。</value></data>
   <data name="SettingsNote" xml:space="preserve"><value>{0} 会在每次启动时解析当前 Codex Desktop 包。金额使用公开 Standard API 价格 × ChatGPT Fast 额度倍率（核对日期 {1}）。Auto-review 假设：{2}。金额是估计，不是订阅账单。</value></data>
   <data name="SaveApply" xml:space="preserve"><value>保存并应用</value></data>
   <data name="Revert" xml:space="preserve"><value>撤销未保存修改</value></data>
@@ -124,6 +139,11 @@
   <data name="ValidationSegment" xml:space="preserve"><value>分段窗口小时数必须大于零。</value></data>
   <data name="ValidationGaussian" xml:space="preserve"><value>高斯带宽小时数必须大于零。</value></data>
   <data name="ValidationMaximum" xml:space="preserve"><value>样本金额上限必须大于零。</value></data>
+  <data name="ValidationPricesMissing" xml:space="preserve"><value>模型价格表至少需要包含一个模型。</value></data>
+  <data name="ValidationPriceModelMissing" xml:space="preserve"><value>模型价格表包含空模型标识。</value></data>
+  <data name="ValidationPriceDuplicate" xml:space="preserve"><value>模型价格表包含重复模型：{0}。</value></data>
+  <data name="ValidationPriceBand" xml:space="preserve"><value>模型 {0} 的{1}无效：输入和输出价格必须大于零，缓存读取和缓存写入价格不得为负数。</value></data>
+  <data name="ValidationPriceLongThreshold" xml:space="preserve"><value>模型 {0} 的长上下文阈值必须大于零。</value></data>
   <data name="DetailsWaiting" xml:space="preserve"><value>预估周限额：等待有效样本</value></data>
   <data name="DetailsEstimateBase" xml:space="preserve"><value>Standard API 等价周额度：${0:N2}</value></data>
   <data name="DetailsEstimates" xml:space="preserve"><value>无长上下文加价：${0:N2}&#13;&#10;官方 &gt;272K 加价：${1:N2}</value></data>
@@ -159,4 +179,10 @@
   <data name="ChartHover" xml:space="preserve"><value>{0:g} · {1} · ${2:N2}</value></data>
   <data name="ChartHoverContribution" xml:space="preserve"><value>{0:g} · {1} · ${2:N2} · 当前估值权重 {3:P0}</value></data>
   <data name="QuickDetailsStatus" xml:space="preserve"><value>运行状态：{0}</value></data>
+  <data name="RepricingCurrent" xml:space="preserve"><value>正在重算当前周</value></data>
+  <data name="RepricingArchive" xml:space="preserve"><value>正在补录历史计价明细</value></data>
+  <data name="RepricingCancelled" xml:space="preserve"><value>已取消过时扫描，将立即处理最新价格。</value></data>
+  <data name="RepricingShowingPrevious" xml:space="preserve"><value>当前显示旧价格结果，等待新价格结果就绪。</value></data>
+  <data name="RepricingPreviousLabel" xml:space="preserve"><value>旧价格</value></data>
+  <data name="RepricingCoverage" xml:space="preserve"><value>已重算 {0} 个区间；{1} 个缺完整明细；{2} 项计价错误。</value></data>
 </root>

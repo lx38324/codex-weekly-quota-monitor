@@ -39,6 +39,19 @@ public static class RegressionCalculator
         Analyze(samples, options).Curve;
 
     /// <summary>
+    /// 仅使用指定价格版本的基础金额样本生成回归或聚合曲线。
+    /// </summary>
+    /// <param name="samples">原始周额度反推样本。</param>
+    /// <param name="options">回归模式和窗口参数。</param>
+    /// <param name="pricingVersion">当前自定义或内置价格配置版本。</param>
+    /// <returns>按时间升序排列的曲线坐标。</returns>
+    public static IReadOnlyList<CurvePoint> BuildCurve(
+        IReadOnlyList<QuotaSample> samples,
+        RegressionOptions options,
+        string pricingVersion) =>
+        Analyze(samples, options, pricingVersion).Curve;
+
+    /// <summary>
     /// 按基础 Standard API 等价金额生成曲线，并返回当前估值真正使用的样本及权重。
     /// </summary>
     /// <param name="samples">原始周额度反推样本。</param>
@@ -47,7 +60,20 @@ public static class RegressionCalculator
     public static RegressionAnalysis Analyze(
         IReadOnlyList<QuotaSample> samples,
         RegressionOptions options) =>
-        Analyze(samples, options, sample => sample.EstimatedWeeklyQuotaUsd);
+        Analyze(samples, options, sample => sample.EstimatedWeeklyQuotaUsd, PublicApiPricing.PricingVersion);
+
+    /// <summary>
+    /// 按指定价格版本的基础金额生成曲线及当前估值贡献样本。
+    /// </summary>
+    /// <param name="samples">原始周额度反推样本。</param>
+    /// <param name="options">回归模式和窗口参数。</param>
+    /// <param name="pricingVersion">当前自定义或内置价格配置版本。</param>
+    /// <returns>基础金额曲线、当前估值和贡献样本组成的统一分析结果。</returns>
+    public static RegressionAnalysis Analyze(
+        IReadOnlyList<QuotaSample> samples,
+        RegressionOptions options,
+        string pricingVersion) =>
+        Analyze(samples, options, sample => sample.EstimatedWeeklyQuotaUsd, pricingVersion);
 
     /// <summary>
     /// 使用官方 >272K 长上下文加价金额生成独立回归曲线。
@@ -61,6 +87,19 @@ public static class RegressionCalculator
         AnalyzeOfficialLongContext(samples, options).Curve;
 
     /// <summary>
+    /// 仅使用指定价格版本的官方长上下文金额样本生成回归或聚合曲线。
+    /// </summary>
+    /// <param name="samples">包含两套金额的原始周额度反推样本。</param>
+    /// <param name="options">回归模式和窗口参数。</param>
+    /// <param name="pricingVersion">当前自定义或内置价格配置版本。</param>
+    /// <returns>按时间升序排列的官方长上下文曲线坐标。</returns>
+    public static IReadOnlyList<CurvePoint> BuildOfficialLongContextCurve(
+        IReadOnlyList<QuotaSample> samples,
+        RegressionOptions options,
+        string pricingVersion) =>
+        AnalyzeOfficialLongContext(samples, options, pricingVersion).Curve;
+
+    /// <summary>
     /// 按官方长上下文加价金额生成曲线，并返回当前估值真正使用的样本及权重。
     /// </summary>
     /// <param name="samples">包含两套金额的原始周额度反推样本。</param>
@@ -69,7 +108,24 @@ public static class RegressionCalculator
     public static RegressionAnalysis AnalyzeOfficialLongContext(
         IReadOnlyList<QuotaSample> samples,
         RegressionOptions options) =>
-        Analyze(samples, options, sample => sample.OfficialLongContextEstimatedWeeklyQuotaUsd);
+        Analyze(
+            samples,
+            options,
+            sample => sample.OfficialLongContextEstimatedWeeklyQuotaUsd,
+            PublicApiPricing.PricingVersion);
+
+    /// <summary>
+    /// 按指定价格版本的官方长上下文金额生成曲线及当前估值贡献样本。
+    /// </summary>
+    /// <param name="samples">包含两套金额的原始周额度反推样本。</param>
+    /// <param name="options">回归模式和窗口参数。</param>
+    /// <param name="pricingVersion">当前自定义或内置价格配置版本。</param>
+    /// <returns>官方长上下文金额曲线、当前估值和贡献样本组成的统一分析结果。</returns>
+    public static RegressionAnalysis AnalyzeOfficialLongContext(
+        IReadOnlyList<QuotaSample> samples,
+        RegressionOptions options,
+        string pricingVersion) =>
+        Analyze(samples, options, sample => sample.OfficialLongContextEstimatedWeeklyQuotaUsd, pricingVersion);
 
     /// <summary>
     /// 按指定金额选择器过滤当前版本样本并执行配置的回归或聚合算法。
@@ -77,14 +133,16 @@ public static class RegressionCalculator
     /// <param name="samples">原始周额度反推样本。</param>
     /// <param name="options">回归模式和窗口参数。</param>
     /// <param name="valueSelector">从单个样本读取目标口径周额度金额的函数。</param>
+    /// <param name="pricingVersion">允许进入本次分析的唯一价格配置版本。</param>
     /// <returns>目标金额口径的曲线和当前估值贡献样本。</returns>
     private static RegressionAnalysis Analyze(
         IReadOnlyList<QuotaSample> samples,
         RegressionOptions options,
-        Func<QuotaSample, decimal> valueSelector)
+        Func<QuotaSample, decimal> valueSelector,
+        string pricingVersion)
     {
         var points = samples
-            .Where(PublicApiPricing.IsCurrentSample)
+            .Where(sample => PublicApiPricing.IsSampleForVersion(sample, pricingVersion))
             .OrderBy(sample => sample.Timestamp)
             .Select(sample => new CurvePoint(sample.Timestamp, valueSelector(sample)))
             .Where(point => point.Value > 0)

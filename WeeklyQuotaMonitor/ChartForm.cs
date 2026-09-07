@@ -34,6 +34,10 @@ public sealed class ChartForm : Form
     private readonly Label _dashboardTitle = new();
     private readonly Label _dashboardSubtitle = new();
     private readonly Label _regressionEstimate = new() { Name = "RegressionEstimateLabel" };
+    private readonly ToolStripStatusLabel _runtimeStatus = new()
+    {
+        Name = "RepricingStatusLabel", Spring = true, TextAlign = ContentAlignment.MiddleLeft
+    };
     private readonly Label _summary = new() { Name = "HistorySummaryLabel" };
     private readonly Label _timeRangeLabel = new();
     private readonly ComboBox _timeRange = new() { Name = "HistoryRangeComboBox" };
@@ -86,6 +90,9 @@ public sealed class ChartForm : Form
         shell.Controls.Add(_sidebar, 0, 0);
         shell.Controls.Add(_contentHost, 1, 0);
         Controls.Add(shell);
+        var statusStrip = new StatusStrip { SizingGrip = false, Dock = DockStyle.Bottom };
+        statusStrip.Items.Add(_runtimeStatus);
+        Controls.Add(statusStrip);
 
         ApplyPreferences(settings);
         SelectSection(DashboardSection.Dashboard);
@@ -421,6 +428,8 @@ public sealed class ChartForm : Form
     /// <param name="options">当前回归模式、窗口和样本过滤参数。</param>
     public void UpdateView(MonitorViewSnapshot view, RegressionOptions options)
     {
+        _runtimeStatus.Text = view.Status;
+        _runtimeStatus.ToolTipText = view.Status;
         _view = view;
         _settings.Regression = options;
         RefreshAllPages();
@@ -490,12 +499,18 @@ public sealed class ChartForm : Form
             _ => throw new InvalidOperationException($"不支持的历史时间范围：{selected.Range}。")
         };
         var samples = _view.Samples.Where(sample => sample.Timestamp >= cutoff).ToArray();
-        var baseAnalysis = RegressionCalculator.Analyze(samples, _settings.Regression);
+        var baseAnalysis = RegressionCalculator.Analyze(
+            samples,
+            _settings.Regression,
+            _view.PricingVersion);
         var officialAnalysis = _settings.EnableOfficialLongContextEstimate
-            ? RegressionCalculator.AnalyzeOfficialLongContext(samples, _settings.Regression)
+            ? RegressionCalculator.AnalyzeOfficialLongContext(
+                samples,
+                _settings.Regression,
+                _view.PricingVersion)
             : new RegressionAnalysis([], []);
         _baseEstimateCard.SetContent(
-            UiText.Get("EstimateBase"),
+            UiText.Get(_view.ShowingPreviousPrices ? "RepricingPreviousLabel" : "EstimateBase"),
             EstimateValue(baseAnalysis.CurrentEstimate),
             UiText.Format("DashboardEstimateCaption", baseAnalysis.CurrentContributions.Count));
 

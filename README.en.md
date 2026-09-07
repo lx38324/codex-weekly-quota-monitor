@@ -25,11 +25,12 @@ The utility installs to `%LOCALAPPDATA%\CodexWeeklyQuotaMonitor`, registers curr
 - Right-click to refresh, open quick details/overview & trends/settings/diagnostics, or exit.
 - Use **Settings → Appearance** for automatic Windows language, Simplified Chinese, English, and system/light/dark themes.
 - Use **Settings → Estimation** to explicitly enable the official `>272K` comparison; it is off by default.
+- Use **Settings → Model pricing** to edit model rates. Complete pricing details are repriced immediately offline; older data needs a one-time log backfill. Previous-price curves remain labeled and visible while the status bar shows progress. **Restore built-in prices** resets pricing only.
 
 The main window contains:
 
 - **Overview & trends** — quota, used/remaining percentage, reset time, samples, history curves, time filters, and token details.
-- **Settings** — polling, data sources, regression, language, theme, and startup.
+- **Settings** — polling, data sources, regression, model pricing, language, theme, and startup.
 - **Diagnostics** — non-sensitive facts suitable for a GitHub issue.
 
 ## Two estimate interpretations
@@ -41,7 +42,7 @@ Both apply recognized ChatGPT Fast credit multipliers. If an offline or legacy l
 
 ## Privacy
 
-The utility stores settings, quota checkpoints, token aggregates, cursors, samples, and operational diagnostics. It does not store conversation text, tool-output text, credentials, or raw App Server stderr.
+The utility stores settings, quota checkpoints, token aggregates, per-response pricing details, cursors, samples, and operational diagnostics. It does not store conversation text, tool-output text, credentials, or raw App Server stderr.
 
 ## Development
 

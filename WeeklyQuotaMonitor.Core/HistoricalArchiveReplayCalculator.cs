@@ -5,7 +5,7 @@ namespace WeeklyQuotaMonitor.Core;
 /// </summary>
 public static class HistoricalArchiveReplayCalculator
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 3;
     private static readonly TimeSpan ResetClusterTolerance = TimeSpan.FromMinutes(1);
 
     /// <summary>
@@ -19,6 +19,21 @@ public static class HistoricalArchiveReplayCalculator
         MonitorState state,
         int historyDays,
         IReadOnlyCollection<string> sourceRoots)
+        => IsReplayRequired(state, historyDays, sourceRoots, PublicApiPricing.PricingVersion);
+
+    /// <summary>
+    /// 判断旧窗口回填是否因算法、指定价格、保留期或自动发现的数据根变化而需要重跑。
+    /// </summary>
+    /// <param name="state">当前持久化监控状态。</param>
+    /// <param name="historyDays">图表配置的历史保留天数。</param>
+    /// <param name="sourceRoots">本轮自动发现的活动与归档会话根目录。</param>
+    /// <param name="pricingVersion">当前生效价格配置的稳定版本。</param>
+    /// <returns>需要重新扫描旧窗口时返回 true。</returns>
+    public static bool IsReplayRequired(
+        MonitorState state,
+        int historyDays,
+        IReadOnlyCollection<string> sourceRoots,
+        string pricingVersion)
     {
         if (state.HistoricalArchiveReplayVersion > CurrentVersion)
         {
@@ -29,7 +44,7 @@ public static class HistoricalArchiveReplayCalculator
         return state.HistoricalArchiveReplayVersion != CurrentVersion ||
                !string.Equals(
                    state.HistoricalArchiveReplayPricingVersion,
-                   PublicApiPricing.PricingVersion,
+                   pricingVersion,
                    StringComparison.Ordinal) ||
                state.HistoricalArchiveReplayHistoryDays != historyDays ||
                !string.Equals(
@@ -104,7 +119,10 @@ public static class HistoricalArchiveReplayCalculator
                 responses,
                 activeCandidates,
                 facts.FilesScanned,
-                0);
+                0)
+            {
+                PricingVersion = facts.PricingVersion
+            };
             var snapshot = new RateLimitSnapshot(
                 finalCheckpoint.Timestamp,
                 limitId,
@@ -125,7 +143,10 @@ public static class HistoricalArchiveReplayCalculator
             limitId,
             windows,
             facts.FilesScanned,
-            facts.MalformedLineCount);
+            facts.MalformedLineCount)
+        {
+            PricingVersion = facts.PricingVersion
+        };
     }
 
     /// <summary>
@@ -143,18 +164,22 @@ public static class HistoricalArchiveReplayCalculator
     {
         foreach (var window in result.Windows)
         {
+            if (window.Samples.Count == 0) continue;
             var firstSampleAt = window.Samples.Min(sample => sample.Timestamp);
+            var coveredIntervals = window.Samples.Select(sample =>
+                (Start: sample.UsedPercent - sample.DeltaPercent, End: sample.UsedPercent)).ToArray();
             state.Samples.RemoveAll(sample =>
-                PublicApiPricing.IsCurrentSample(sample) &&
+                PublicApiPricing.IsSampleForVersion(sample, result.PricingVersion) &&
                 string.Equals(sample.LimitId, result.LimitId, StringComparison.Ordinal) &&
                 sample.Timestamp >= firstSampleAt &&
-                sample.Timestamp <= window.WindowEnd);
+                sample.Timestamp <= window.WindowEnd &&
+                coveredIntervals.Any(interval => sample.UsedPercent > interval.Start && sample.UsedPercent <= interval.End));
             state.Samples.AddRange(window.Samples);
         }
 
         state.Samples.Sort((left, right) => left.Timestamp.CompareTo(right.Timestamp));
         state.HistoricalArchiveReplayVersion = CurrentVersion;
-        state.HistoricalArchiveReplayPricingVersion = PublicApiPricing.PricingVersion;
+        state.HistoricalArchiveReplayPricingVersion = result.PricingVersion;
         state.HistoricalArchiveReplayCompletedAt = DateTimeOffset.Now;
         state.HistoricalArchiveReplayHistoryDays = historyDays;
         state.HistoricalArchiveReplaySourceRoots = BuildSourceRootsSignature(sourceRoots);

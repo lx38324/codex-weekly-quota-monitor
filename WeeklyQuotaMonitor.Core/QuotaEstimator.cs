@@ -26,12 +26,30 @@ public static class QuotaEstimator
         RateLimitSnapshot snapshot,
         RolloutScanResult scan,
         decimal minimumPercentDelta)
+        => Process(state, snapshot, scan, minimumPercentDelta, PublicApiPricing.PricingVersion);
+
+    /// <summary>
+    /// 合并指定价格版本的新日志用量，并在百分比变化达到阈值时生成同版本反推样本。
+    /// </summary>
+    /// <param name="state">需要原地更新并持久化的监控状态。</param>
+    /// <param name="snapshot">当前服务端额度快照。</param>
+    /// <param name="scan">自上次额度变化以来新增的本机日志用量。</param>
+    /// <param name="minimumPercentDelta">形成有效样本所需的最小百分比变化。</param>
+    /// <param name="pricingVersion">本轮计算使用的不可变价格配置版本。</param>
+    /// <returns>是否产生样本及本次处理状态。</returns>
+    public static EstimationUpdate Process(
+        MonitorState state,
+        RateLimitSnapshot snapshot,
+        RolloutScanResult scan,
+        decimal minimumPercentDelta,
+        string pricingVersion)
     {
         if (minimumPercentDelta <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(minimumPercentDelta), "最小百分比变化必须大于零。");
         }
 
+        ResetIncompatiblePendingInterval(state, pricingVersion);
         ApplyScanDiagnostics(state, scan);
         if (state.ReferenceUsedPercent is null || state.LastObservedUsedPercent is null)
         {
@@ -59,11 +77,12 @@ public static class QuotaEstimator
                 return new(false, null, "检测到额度窗口重置；本轮日志未按新窗口切分，已保守丢弃并建立当前基线。");
             }
 
-            MergeScan(state, scan);
+            MergeScan(state, scan, pricingVersion);
             return TryCreateSample(
                 state,
                 snapshot,
                 minimumPercentDelta,
+                pricingVersion,
                 "检测到额度窗口重置，已仅使用新窗口开始后的日志。 ");
         }
 
@@ -73,9 +92,9 @@ public static class QuotaEstimator
             return new(false, null, "额度百分比下降但未确认跨过旧窗口重置时刻；按疑似服务端修正保守清空区间并重建基线。");
         }
 
-        MergeScan(state, scan);
+        MergeScan(state, scan, pricingVersion);
         UpdateObservedUsage(state, snapshot);
-        return TryCreateSample(state, snapshot, minimumPercentDelta, string.Empty);
+        return TryCreateSample(state, snapshot, minimumPercentDelta, pricingVersion, string.Empty);
     }
 
     /// <summary>
@@ -184,10 +203,11 @@ public static class QuotaEstimator
     /// </summary>
     /// <param name="state">需要更新的监控状态。</param>
     /// <param name="scan">本轮扫描结果。</param>
-    private static void MergeScan(MonitorState state, RolloutScanResult scan)
+    /// <param name="pricingVersion">当前价格配置版本，用于拒绝跨版本累计。</param>
+    private static void MergeScan(MonitorState state, RolloutScanResult scan, string pricingVersion)
     {
         var scanContainsResponses = scan.ModelResponseCount > 0 || scan.UnpricedModelResponses > 0;
-        if (scanContainsResponses && !string.Equals(scan.PricingVersion, PublicApiPricing.PricingVersion, StringComparison.Ordinal))
+        if (scanContainsResponses && !string.Equals(scan.PricingVersion, pricingVersion, StringComparison.Ordinal))
         {
             state.PendingUnpricedModelResponses += scan.ModelResponseCount + scan.UnpricedModelResponses;
             state.UnpricedModelResponses += scan.ModelResponseCount + scan.UnpricedModelResponses;
@@ -210,6 +230,7 @@ public static class QuotaEstimator
         }
 
         state.PendingUsage = state.PendingUsage.Add(scan.Usage);
+        state.PendingPricingUsages.AddRange(scan.PricingUsages);
         state.PendingApiEquivalentUsd += scan.ApiEquivalentUsd;
         state.PendingOfficialLongContextApiEquivalentUsd += scan.OfficialLongContextApiEquivalentUsd;
         state.PendingModelResponseCount += scan.ModelResponseCount;
@@ -244,12 +265,14 @@ public static class QuotaEstimator
     /// <param name="state">当前监控状态。</param>
     /// <param name="snapshot">当前额度快照。</param>
     /// <param name="minimumPercentDelta">形成有效样本所需的最小百分比变化。</param>
+    /// <param name="pricingVersion">写入新样本的当前价格配置版本。</param>
     /// <param name="statusPrefix">需要放在结果状态前的窗口说明。</param>
     /// <returns>本轮估算结果。</returns>
     private static EstimationUpdate TryCreateSample(
         MonitorState state,
         RateLimitSnapshot snapshot,
         decimal minimumPercentDelta,
+        string pricingVersion,
         string statusPrefix)
     {
         var deltaPercent = snapshot.UsedPercent - state.ReferenceUsedPercent!.Value;
@@ -300,7 +323,8 @@ public static class QuotaEstimator
             OfficialLongContextIntervalApiEquivalentUsd = state.PendingOfficialLongContextApiEquivalentUsd,
             OfficialLongContextEstimatedWeeklyQuotaUsd = officialLongContextEstimatedWeeklyUsd,
             OfficialLongContextAmountDefinition = PublicApiPricing.OfficialLongContextAmountDefinition,
-            PricingVersion = PublicApiPricing.PricingVersion,
+            PricingVersion = pricingVersion,
+            PricingUsages = state.PendingPricingUsages.ToArray(),
             ServiceTiers = string.Join(", ", state.PendingServiceTiers.OrderBy(tier => tier, StringComparer.OrdinalIgnoreCase)),
             CreditMultipliers = string.Join(", ", state.PendingCreditMultipliers.OrderBy(multiplier => multiplier, StringComparer.OrdinalIgnoreCase))
         };
@@ -311,6 +335,30 @@ public static class QuotaEstimator
             true,
             sample,
             $"{statusPrefix}新增样本：无长上下文加价 ${estimatedWeeklyUsd:F2}；官方 >272K 加价 ${officialLongContextEstimatedWeeklyUsd:F2}。");
+    }
+
+    /// <summary>
+    /// 在价格配置变化后清除无法与新价格安全合并的实时待采样区间，历史重放随后可按日志重建。
+    /// </summary>
+    /// <param name="state">可能保存旧价格累计金额的监控状态。</param>
+    /// <param name="pricingVersion">当前生效价格配置版本。</param>
+    /// <returns>确实清除了不兼容待采样数据时返回 true。</returns>
+    public static bool ResetIncompatiblePendingInterval(MonitorState state, string pricingVersion)
+    {
+        var hasPendingData = state.PendingModelResponseCount > 0 ||
+                             state.PendingUnpricedModelResponses > 0 ||
+                             state.PendingApiEquivalentUsd > 0 ||
+                             state.PendingOfficialLongContextApiEquivalentUsd > 0 ||
+                             !state.PendingUsage.IsZero();
+        if (!hasPendingData ||
+            string.Equals(state.PendingPricingVersion, pricingVersion, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        state.UnattributedPercentChanges++;
+        ClearPending(state);
+        return true;
     }
 
     /// <summary>
@@ -391,6 +439,7 @@ public static class QuotaEstimator
         state.PendingApiEquivalentUsd = 0;
         state.PendingOfficialLongContextApiEquivalentUsd = 0;
         state.PendingUsage = TokenUsage.Zero;
+        state.PendingPricingUsages.Clear();
         state.PendingModelResponseCount = 0;
         state.PendingModels.Clear();
         state.PendingServiceTiers.Clear();

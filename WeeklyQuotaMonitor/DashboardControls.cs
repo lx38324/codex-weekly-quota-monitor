@@ -919,7 +919,7 @@ public sealed class DiagnosticsPanel : UserControl
             $"archive_unattributed={_view.HistoricalArchiveReplayUnattributedIntervals}");
         AddFact("DiagnosticsDataFolder", AppPaths.DataDirectory);
         AddFact("DiagnosticsSessionFolder", _settings.SessionRoot);
-        AddFact("DiagnosticsPricing", PublicApiPricing.PricingVersion);
+        AddFact("DiagnosticsPricing", _view.PricingVersion);
     }
 
     /// <summary>

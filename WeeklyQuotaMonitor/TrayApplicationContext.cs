@@ -131,10 +131,10 @@ public sealed class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>
-    /// 保存协调器设置，并立即把语言和主题同步到全部托盘与窗口控件。
+    /// 保存协调器设置，立即同步语言和主题，并主动查询一次额度以应用新价格和触发历史重算。
     /// </summary>
     /// <param name="settings">设置页提交的完整配置。</param>
-    private void ApplySettings(AppSettings settings)
+    private async void ApplySettings(AppSettings settings)
     {
         UiText.SetLanguage(settings.Language);
         AppTheme.Set(settings.Theme);
@@ -142,6 +142,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _chartForm.ApplyPreferences(settings);
         ApplyLocalization();
         UpdateView(_coordinator.CurrentView);
+        await _coordinator.RefreshNowAsync();
     }
 
     /// <summary>

@@ -3,7 +3,7 @@ using WeeklyQuotaMonitor.Core;
 namespace WeeklyQuotaMonitor;
 
 /// <summary>
-/// 以分类标签页编辑常规、数据源、采样、估算、外观和高级参数，并支持即时中英文切换。
+/// 以分类标签页编辑常规、数据源、采样、估算、模型价格、外观和高级参数，并支持即时中英文切换。
 /// </summary>
 public sealed class SettingsPanel : UserControl
 {
@@ -27,6 +27,7 @@ public sealed class SettingsPanel : UserControl
         1000000,
         AppSettingsMigration.DefaultMaximumSampleUsd,
         2);
+    private readonly PricingEditorPanel _pricingEditor = new();
     private readonly ComboBox _language = ChoiceBox();
     private readonly ComboBox _theme = ChoiceBox();
     private readonly Label _note = new() { AutoSize = true, MaximumSize = new Size(780, 0) };
@@ -88,6 +89,7 @@ public sealed class SettingsPanel : UserControl
         _segmentHours.Value = (decimal)settings.Regression.SegmentWindowHours;
         _gaussianHours.Value = (decimal)settings.Regression.GaussianBandwidthHours;
         _maximumSampleUsd.Value = settings.Regression.MaximumSampleUsd;
+        _pricingEditor.LoadProfiles(settings.ModelPrices);
         BindChoices(settings.Regression.Mode, settings.Language, settings.Theme);
         _saveStatus.Text = string.Empty;
     }
@@ -112,6 +114,7 @@ public sealed class SettingsPanel : UserControl
         _defaults.Text = UiText.Get("RestoreDefaults");
         _startWithWindows.Text = UiText.Get("SettingsAutostart");
         _enableOfficialLongContextEstimate.Text = UiText.Get("SettingsOfficialLongContextOption");
+        _pricingEditor.ApplyLocalization();
         _note.Text = UiText.Format(
             "SettingsNote",
             CodexExecutableResolver.DesktopPackageLocator,
@@ -125,7 +128,7 @@ public sealed class SettingsPanel : UserControl
     }
 
     /// <summary>
-    /// 创建六个设置分类及其字段布局。
+    /// 创建常规、数据源、采样、估算、模型价格、外观和高级设置分类。
     /// </summary>
     private void BuildSections()
     {
@@ -149,6 +152,10 @@ public sealed class SettingsPanel : UserControl
             ("SettingsSegmentHours", _segmentHours),
             ("SettingsGaussianHours", _gaussianHours),
             ("SettingsMaximumSample", _maximumSampleUsd)]);
+        var pricing = new TabPage();
+        _localizedControls[pricing] = "SettingsPricing";
+        pricing.Controls.Add(_pricingEditor);
+        _sections.TabPages.Add(pricing);
         AddSection("SettingsAppearance", [
             ("SettingsLanguage", _language),
             ("SettingsTheme", _theme)]);
@@ -231,6 +238,7 @@ public sealed class SettingsPanel : UserControl
             EnableOfficialLongContextEstimate = _enableOfficialLongContextEstimate.Checked,
             Language = SelectedLanguage(),
             Theme = SelectedTheme(),
+            ModelPrices = _pricingEditor.GetProfiles().ToList(),
             Regression = new RegressionOptions
             {
                 Mode = SelectedRegressionMode(),
