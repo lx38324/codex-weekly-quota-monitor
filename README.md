@@ -42,6 +42,8 @@ pwsh -ExecutionPolicy Bypass -File .\install.ps1
 
 ## 数据与隐私
 
+生图会消耗 Codex 额度，但目前本地日志未提供独立图像用量，本程序尚未计入其成本；有生图的区间可能低估额度，详见诊断页。
+
 数据目录：`%LOCALAPPDATA%\CodexWeeklyQuotaMonitor`
 
 程序保存设置、额度检查点、token 汇总、逐响应计价明细、文件游标、样本和运行诊断；不保存对话正文、工具输出正文、认证凭据或 App Server stderr 原文。

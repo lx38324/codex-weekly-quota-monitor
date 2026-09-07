@@ -58,16 +58,19 @@ public sealed class MetricCard : Panel
         _layout.Dock = DockStyle.Fill;
         _layout.RowCount = 4;
         _layout.ColumnCount = 1;
+        _layout.ColumnStyles.Add(new(SizeType.Percent, 100));
         _layout.BackColor = Color.Transparent;
         _layout.RowStyles.Add(new(SizeType.AutoSize));
         _layout.RowStyles.Add(new(SizeType.AutoSize));
         _layout.RowStyles.Add(new(SizeType.AutoSize));
         _layout.RowStyles.Add(new(SizeType.Percent, 100));
         _title.AutoSize = true;
+        _title.Dock = DockStyle.Fill;
         _title.Font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 8.5F, FontStyle.Bold);
         _title.Margin = new Padding(0, 0, 0, 3);
         _title.BackColor = Color.Transparent;
         _value.AutoSize = true;
+        _value.Dock = DockStyle.Fill;
         _value.Font = new Font(
             SystemFonts.MessageBoxFont!.FontFamily,
             style == MetricCardStyle.Hero ? 20F : 16.5F,
@@ -75,6 +78,7 @@ public sealed class MetricCard : Panel
         _value.Margin = new Padding(0, 0, 0, 4);
         _value.BackColor = Color.Transparent;
         _caption.AutoSize = true;
+        _caption.Dock = DockStyle.Fill;
         _caption.Margin = new Padding(0);
         _caption.BackColor = Color.Transparent;
         _layout.Controls.Add(_title, 0, 0);
@@ -95,11 +99,23 @@ public sealed class MetricCard : Panel
     public override Size GetPreferredSize(Size proposedSize)
     {
         var availableWidth = Math.Max(1, proposedSize.Width - Padding.Horizontal);
-        var content = _layout.GetPreferredSize(new Size(availableWidth, 0));
+        var contentHeight = new[] { _title, _value, _caption }.Sum(label =>
+            label.GetPreferredSize(new Size(availableWidth, 0)).Height + label.Margin.Vertical);
         var scaledBaseline = (int)Math.Ceiling(LogicalHeight * DeviceDpi / 96F);
         return new(
             Math.Max(MinimumSize.Width, proposedSize.Width),
-            Math.Max(scaledBaseline, content.Height + Padding.Vertical + Math.Max(4, DeviceDpi / 24)));
+            Math.Max(scaledBaseline, contentHeight + Padding.Vertical + Math.Max(4, DeviceDpi / 24)));
+    }
+
+    /// <summary>按实际卡片内容宽度约束三行文字，字体回退和高 DPI 下允许换行，避免服务器字体环境裁切。</summary>
+    protected override void OnLayout(LayoutEventArgs levent)
+    {
+        var width = Math.Max(1, ClientSize.Width - Padding.Horizontal);
+        foreach (var label in new[] { _title, _value, _caption })
+        {
+            if (label.MaximumSize.Width != width) label.MaximumSize = new Size(width, 0);
+        }
+        base.OnLayout(levent);
     }
 
     /// <summary>
@@ -114,10 +130,11 @@ public sealed class MetricCard : Panel
         _value.Text = value;
         _caption.Text = caption;
         AccessibleName = $"{title}: {value}. {caption}";
-        _title.ForeColor = AppTheme.Current.MutedText;
+        var hero = Style == MetricCardStyle.Hero;
+        _title.ForeColor = hero ? Color.FromArgb(220, 234, 252) : AppTheme.Current.MutedText;
         _value.ForeColor = ResolveAccent();
-        _caption.ForeColor = AppTheme.Current.MutedText;
-        BackColor = AppTheme.Current.Surface;
+        _caption.ForeColor = hero ? Color.FromArgb(190, 209, 233) : AppTheme.Current.MutedText;
+        BackColor = hero ? Color.FromArgb(8, 25, 52) : AppTheme.Current.Surface;
         _layout.BackColor = BackColor;
         Invalidate();
     }
@@ -568,7 +585,7 @@ public sealed class SidebarNavigationButton : Control
     }
 
     /// <summary>
-    /// 绘制选中背景、青色强调条、矢量图标和导航文本。
+    /// 绘制选中背景、青色强调条、矢量图标和可换行导航文本；英文连接符不作为快捷键标记。
     /// </summary>
     /// <param name="e">当前绘制上下文。</param>
     protected override void OnPaint(PaintEventArgs e)
@@ -594,13 +611,17 @@ public sealed class SidebarNavigationButton : Control
             SystemFonts.MessageBoxFont!.FontFamily,
             9.5F,
             _selected ? FontStyle.Bold : FontStyle.Regular);
+        var textWidth = Math.Max(1, Width - 62);
+        const TextFormatFlags textFlags = TextFormatFlags.Left | TextFormatFlags.WordBreak |
+            TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix;
+        var textHeight = TextRenderer.MeasureText(Text, font, new Size(textWidth, int.MaxValue), textFlags).Height;
         TextRenderer.DrawText(
             e.Graphics,
             Text,
             font,
-            new Rectangle(52, 0, Width - 62, Height),
+            new Rectangle(52, Math.Max(0, (Height - textHeight) / 2), textWidth, textHeight),
             _selected ? Color.FromArgb(241, 245, 249) : Color.FromArgb(166, 181, 201),
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            textFlags);
     }
 
     /// <summary>
@@ -920,6 +941,7 @@ public sealed class DiagnosticsPanel : UserControl
         AddFact("DiagnosticsDataFolder", AppPaths.DataDirectory);
         AddFact("DiagnosticsSessionFolder", _settings.SessionRoot);
         AddFact("DiagnosticsPricing", _view.PricingVersion);
+        AddFact("DiagnosticsImageCost", UiText.Get("ImageCostUnavailable"));
     }
 
     /// <summary>

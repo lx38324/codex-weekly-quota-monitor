@@ -38,6 +38,11 @@ public sealed class ChartForm : Form
     {
         Name = "RepricingStatusLabel", Spring = true, TextAlign = ContentAlignment.MiddleLeft
     };
+    private readonly StatusStrip _statusStrip = new() { SizingGrip = false, Dock = DockStyle.Bottom };
+    private readonly ToolStripProgressBar _replayProgress = new()
+    {
+        Name = "RepricingProgress", Minimum = 0, Maximum = 100, Width = 180, Visible = false
+    };
     private readonly Label _summary = new() { Name = "HistorySummaryLabel" };
     private readonly Label _timeRangeLabel = new();
     private readonly ComboBox _timeRange = new() { Name = "HistoryRangeComboBox" };
@@ -90,9 +95,9 @@ public sealed class ChartForm : Form
         shell.Controls.Add(_sidebar, 0, 0);
         shell.Controls.Add(_contentHost, 1, 0);
         Controls.Add(shell);
-        var statusStrip = new StatusStrip { SizingGrip = false, Dock = DockStyle.Bottom };
-        statusStrip.Items.Add(_runtimeStatus);
-        Controls.Add(statusStrip);
+        _statusStrip.Items.Add(_runtimeStatus);
+        _statusStrip.Items.Add(_replayProgress);
+        Controls.Add(_statusStrip);
 
         ApplyPreferences(settings);
         SelectSection(DashboardSection.Dashboard);
@@ -299,6 +304,8 @@ public sealed class ChartForm : Form
         _settingsPanel.LoadSettings(settings);
         ApplyLocalization();
         AppTheme.Apply(this);
+        _statusStrip.BackColor = Color.FromArgb(8, 25, 52);
+        _runtimeStatus.ForeColor = Color.FromArgb(220, 234, 252);
         foreach (var option in new[]
                  {
                      _showBaseSamples,
@@ -430,6 +437,8 @@ public sealed class ChartForm : Form
     {
         _runtimeStatus.Text = view.Status;
         _runtimeStatus.ToolTipText = view.Status;
+        _replayProgress.Visible = view.RepricingProgressPercent.HasValue;
+        _replayProgress.Value = view.RepricingProgressPercent ?? 0;
         _view = view;
         _settings.Regression = options;
         RefreshAllPages();
@@ -597,6 +606,7 @@ public sealed class ChartForm : Form
         _grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.DisplayedCellsExceptHeaders;
         _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells;
         _grid.MultiSelect = false;
+        _grid.DefaultCellStyle.Padding = new Padding(4, 4, 4, 4);
         _grid.TabStop = false;
         _grid.DataBindingComplete += (_, _) =>
         {

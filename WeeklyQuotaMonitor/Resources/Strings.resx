@@ -185,4 +185,6 @@
   <data name="RepricingShowingPrevious" xml:space="preserve"><value>Showing previous-price results until new results are ready.</value></data>
   <data name="RepricingPreviousLabel" xml:space="preserve"><value>Previous prices</value></data>
   <data name="RepricingCoverage" xml:space="preserve"><value>Repriced {0} intervals; {1} lack complete details; {2} pricing errors.</value></data>
+  <data name="DiagnosticsImageCost" xml:space="preserve"><value>Image generation cost</value></data>
+  <data name="ImageCostUnavailable" xml:space="preserve"><value>Not included: local image results lack image usage details; estimates may be low.</value></data>
 </root>

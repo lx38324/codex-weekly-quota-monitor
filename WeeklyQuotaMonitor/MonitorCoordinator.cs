@@ -23,6 +23,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     private bool _priceRebuildPending;
     private string _repricingNote = string.Empty;
     private string? _repriceSourceVersion;
+    private int? _replayProgressPercent;
     private bool _notificationProcessing;
     private bool _disposed;
     private bool _restartConnectionRequested;
@@ -520,7 +521,11 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         }
         finally
         {
-            if (ReferenceEquals(_replayCancellation, cancellation)) _replayCancellation = null;
+            if (ReferenceEquals(_replayCancellation, cancellation))
+            {
+                _replayCancellation = null;
+                _replayProgressPercent = null;
+            }
         }
     }
 
@@ -536,6 +541,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             var now = DateTimeOffset.Now;
             if (value.Completed != value.Total && now - lastUpdate < TimeSpan.FromSeconds(1)) return;
             lastUpdate = now;
+            _replayProgressPercent = value.Total == 0 ? 0 : (int)(100L * value.Completed / value.Total);
             PublishView($"{UiText.Get(labelKey)} {value.Completed}/{value.Total}");
         });
     }
@@ -654,6 +660,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         {
             PricingVersion = displayedVersion,
             ShowingPreviousPrices = displayedVersion != _pricingCatalog.PricingVersion,
+            RepricingProgressPercent = _replayProgressPercent,
             OfficialLongContextEstimatedWeeklyQuotaUsd =
                 RegressionCalculator.CurrentEstimate(officialLongContextCurve),
             OfficialLongContextRegressionCurve = officialLongContextCurve,

@@ -50,6 +50,7 @@ internal static class Program
             TestOfficialLongContextEstimateIsOptIn,
             TestThemeSelectionRespectsManualOverride,
             TestDashboardLayoutAtSupportedDpiScales,
+            TestMetricCardWrapsAcrossFonts,
             TestDashboardFitsReportedViewport,
             TestDashboardFitsHighScaleScreenshotViewport,
             TestTrendControlsFitHighlightAndDefaultToThirtyDays,
@@ -345,6 +346,29 @@ internal static class Program
         }
     }
 
+    /// <summary>复现服务器默认字体及英文长说明下的窄卡片，验证按约束宽度换行且高度可完整容纳文字。</summary>
+    private static void TestMetricCardWrapsAcrossFonts()
+    {
+        foreach (var family in new[] { "Segoe UI", "Microsoft Sans Serif" })
+        foreach (var text in new[] { "当前权威周额度窗口", "Current authoritative weekly allowance" })
+        {
+            using var card = new MetricCard();
+            using var font = new Font(family, 9F);
+            card.Font = font;
+            card.SetContent("Used", "3.00%", text);
+            card.Size = card.GetPreferredSize(new Size(145, 0));
+            card.CreateControl();
+            card.PerformLayout();
+            foreach (var label in FindControls<Label>(card))
+            {
+                var bounds = card.RectangleToClient(label.RectangleToScreen(label.ClientRectangle));
+                Equal(true, card.ClientRectangle.Contains(bounds), $"{family} 字体说明必须完整位于卡片内");
+                Equal(true, label.Height >= label.GetPreferredSize(new Size(label.Width, 0)).Height,
+                    $"{family} 字体必须为换行保留足够高度");
+            }
+        }
+    }
+
     /// <summary>
     /// 验证用户截图对应的 1160×730 客户区内五张指标卡、趋势图和连接徽标完整可见。
     /// </summary>
@@ -536,6 +560,7 @@ internal static class Program
         if (repricing) view = view with
         {
             ShowingPreviousPrices = true,
+            RepricingProgressPercent = 23,
             Status = UiText.Get("RepricingShowingPrevious") + " " + UiText.Get("RepricingArchive") + " 423/1810"
         };
         form.UpdateView(view, new RegressionOptions { Mode = RegressionMode.GaussianAggregation });

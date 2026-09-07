@@ -42,6 +42,8 @@ Both apply recognized ChatGPT Fast credit multipliers. If an offline or legacy l
 
 ## Privacy
 
+Image generation consumes Codex allowance, but observed local logs do not expose separate image usage. Image costs are not included yet, so affected intervals may underestimate the quota. See Diagnostics for this limitation.
+
 The utility stores settings, quota checkpoints, token aggregates, per-response pricing details, cursors, samples, and operational diagnostics. It does not store conversation text, tool-output text, credentials, or raw App Server stderr.
 
 ## Development

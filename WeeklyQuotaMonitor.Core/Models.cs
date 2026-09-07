@@ -314,6 +314,7 @@ public sealed record MonitorViewSnapshot(
     IReadOnlyList<CurvePoint> RegressionCurve)
 {
     public bool ShowingPreviousPrices { get; init; }
+    public int? RepricingProgressPercent { get; init; }
     public string PricingVersion { get; init; } = PublicApiPricing.PricingVersion;
     public decimal? OfficialLongContextEstimatedWeeklyQuotaUsd { get; init; }
     public IReadOnlyList<CurvePoint> OfficialLongContextRegressionCurve { get; init; } = [];
