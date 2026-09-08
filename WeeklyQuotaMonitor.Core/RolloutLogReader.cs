@@ -15,6 +15,7 @@ public sealed partial class RolloutLogReader
     private const int SessionHeaderPrefixBytes = 4096;
     private const int StreamingReadBufferBytes = 64 * 1024;
     private readonly PricingCatalog _pricingCatalog;
+    private readonly Dictionary<string, ActivityIndex> _activityIndexes = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// 创建使用程序内置价格的日志读取器，供既有调用和独立业务测试使用。
@@ -148,7 +149,7 @@ public sealed partial class RolloutLogReader
     }
 
     /// <summary>
-    /// 从当前周窗口内仍有写入的 rollout 文件重读完整上下文，提取可全局排序的响应事实和额度候选。
+    /// 根据日志内部事件时间选择窗口相关文件，重读完整上下文；修改时间不能用于排除跨重置会话。
     /// </summary>
     /// <param name="sessionRoot">Codex sessions 根目录。</param>
     /// <param name="windowStart">当前周窗口起点。</param>
@@ -212,16 +213,25 @@ public sealed partial class RolloutLogReader
         var configuredTier = ReadConfiguredServiceTierEvidence(normalizedRoots[0]);
         var paths = normalizedRoots
             .SelectMany(EnumerateRolloutFiles)
-            .Where(path => new FileInfo(path).LastWriteTimeUtc >= windowStart.UtcDateTime)
             .GroupBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.MaxBy(path => new FileInfo(path).Length)!)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var completed = 0;
+        var scanned = 0;
+        var existingPaths = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var missing in _activityIndexes.Keys.Where(path => !existingPaths.Contains(path)).ToArray())
+            _activityIndexes.Remove(missing);
         progress?.Report((0, paths.Length));
         foreach (var path in paths)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!MayContainEventsSince(path, windowStart, cancellationToken))
+            {
+                progress?.Report((++completed, paths.Length));
+                continue;
+            }
+            scanned++;
             var tierProbe = new ScanAccumulator(_pricingCatalog, null, retainPricingUsages: false);
             var tierProbeCursor = new FileCursorState();
             ProcessCompleteLines(path, 0, line =>
@@ -248,8 +258,50 @@ public sealed partial class RolloutLogReader
             progress?.Report((++completed, paths.Length));
         }
 
-        return accumulator.ToHistoricalFacts(windowStart, windowEnd, paths.Length);
+        return accumulator.ToHistoricalFacts(windowStart, windowEnd, scanned);
     }
+
+    /// <summary>
+    /// 增量索引完整记录中的最大事件时间；追加写入即使不更新 mtime 也按长度发现。
+    /// 索引只在读取成功后提交；截短、换文件或同长改写会重建。无法解析的时间保留给正常扫描报告，不能据此排除文件。
+    /// </summary>
+    private bool MayContainEventsSince(string path, DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        var info = new FileInfo(path);
+        _activityIndexes.TryGetValue(path, out var previous);
+        var reusable = previous is not null && previous.CreationTicks == info.CreationTimeUtc.Ticks &&
+            info.Length >= previous.Length &&
+            (info.Length != previous.Length || info.LastWriteTimeUtc.Ticks == previous.WriteTicks);
+        var offset = reusable ? previous!.Offset : 0;
+        var latest = reusable ? previous!.Latest : DateTimeOffset.MinValue;
+        var uncertain = reusable && previous!.Uncertain;
+        var committed = ProcessCompleteLines(path, offset, line =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    TryReadTimestamp(document.RootElement, out var timestamp))
+                    latest = timestamp > latest ? timestamp : latest;
+                else
+                    uncertain = true;
+            }
+            catch (JsonException)
+            {
+                // 正常扫描会计数并展示坏行；索引不得把无法分类的文件误判为已过期。
+                uncertain = true;
+            }
+        });
+        cancellationToken.ThrowIfCancellationRequested();
+        _activityIndexes[path] = new(committed, info.Length, info.CreationTimeUtc.Ticks,
+            info.LastWriteTimeUtc.Ticks, latest, uncertain);
+        return uncertain || latest >= since;
+    }
+
+    /// <summary>仅缓存文件活动时间和增量位置，不保存对话正文；供同一读取器后续历史扫描复用。</summary>
+    private sealed record ActivityIndex(long Offset, long Length, long CreationTicks, long WriteTicks,
+        DateTimeOffset Latest, bool Uncertain);
 
     /// <summary>
     /// 根据配置的 sessions 路径自动发现同一 Codex 数据目录下可用的活动与归档会话根目录。

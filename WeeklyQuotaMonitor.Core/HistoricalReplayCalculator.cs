@@ -7,7 +7,7 @@ namespace WeeklyQuotaMonitor.Core;
 /// </summary>
 public static class HistoricalReplayCalculator
 {
-    public const int CurrentReplayVersion = 7;
+    public const int CurrentReplayVersion = 8;
     public const string HistoricalSampleSource = "historical-replay";
     private static readonly TimeSpan ResetClusterTolerance = TimeSpan.FromMinutes(1);
 
@@ -142,28 +142,13 @@ public static class HistoricalReplayCalculator
     }
 
     /// <summary>
-    /// 将重放结果幂等合入监控状态；仅替换被成功重建区间覆盖的当前价格样本，保留无法重建区间的既有样本。
+    /// 合入成功重建区间；响应覆盖退化时保留旧记录并记录拒绝数，不能把局部扫描当作完整重算。
     /// </summary>
     /// <param name="state">需要更新并持久化的监控状态。</param>
     /// <param name="result">已完成的历史重放结果。</param>
     public static void ApplyToState(MonitorState state, HistoricalReplayResult result)
     {
-        var replayedIntervals = result.Samples
-            .Select(sample => new
-            {
-                StartUsedPercent = sample.UsedPercent - sample.DeltaPercent,
-                EndUsedPercent = sample.UsedPercent
-            })
-            .ToArray();
-        state.Samples.RemoveAll(sample =>
-            PublicApiPricing.IsSampleForVersion(sample, result.PricingVersion) &&
-            string.Equals(sample.LimitId, result.LimitId, StringComparison.Ordinal) &&
-            sample.Timestamp >= result.WindowStart &&
-            sample.Timestamp <= result.WindowEnd &&
-            replayedIntervals.Any(interval =>
-                sample.UsedPercent > interval.StartUsedPercent &&
-                sample.UsedPercent <= interval.EndUsedPercent));
-        state.Samples.AddRange(result.Samples);
+        state.HistoricalReplayCoverageRejectedIntervals = MergeCoveredSamples(state, result);
         state.Samples.Sort((left, right) => left.Timestamp.CompareTo(right.Timestamp));
         state.HistoricalReplayVersion = CurrentReplayVersion;
         state.HistoricalReplayPricingVersion = result.PricingVersion;
@@ -177,6 +162,93 @@ public static class HistoricalReplayCalculator
         state.HistoricalReplayAwaitingLogIntervals = result.AwaitingLogIntervalCount;
         state.HistoricalReplayUnattributedUsedPercents = result.UnattributedUsedPercents.ToList();
         state.HistoricalReplayMalformedLines = result.MalformedLineCount;
+    }
+
+    /// <summary>
+    /// 按相交百分比区间一起合并，支持一段拆多段、多段合一；保留未覆盖点。
+    /// 同一或更宽时间范围下响应数、输入或输出减少意味着覆盖退化；金额下降本身不是拒绝依据。
+    /// 更早的首次观察边界允许排除迟到响应。返回拒绝替换的区间数，供当前周和归档共同报告。
+    /// </summary>
+    internal static int MergeCoveredSamples(MonitorState state, HistoricalReplayResult result)
+    {
+        var pending = result.Samples.ToList();
+        var existing = state.Samples.Where(sample =>
+            PublicApiPricing.IsSampleForVersion(sample, result.PricingVersion) &&
+            sample.LimitId == result.LimitId && sample.Timestamp >= result.WindowStart &&
+            sample.Timestamp <= result.WindowEnd).ToArray();
+        var rejected = 0;
+        while (pending.Count > 0)
+        {
+            var replacements = new List<QuotaSample> { pending[0] };
+            pending.RemoveAt(0);
+            var start = replacements[0].UsedPercent - replacements[0].DeltaPercent;
+            var end = replacements[0].UsedPercent;
+            QuotaSample[] overlaps;
+            bool expanded;
+            do
+            {
+                var previousStart = start;
+                var previousEnd = end;
+                overlaps = existing.Where(sample => sample.UsedPercent > start &&
+                    sample.UsedPercent - sample.DeltaPercent < end).ToArray();
+                if (overlaps.Length > 0)
+                {
+                    start = Math.Min(start, overlaps.Min(sample => sample.UsedPercent - sample.DeltaPercent));
+                    end = Math.Max(end, overlaps.Max(sample => sample.UsedPercent));
+                }
+                var connected = pending.Where(sample => sample.UsedPercent > start &&
+                    sample.UsedPercent - sample.DeltaPercent < end).ToArray();
+                foreach (var sample in connected)
+                {
+                    replacements.Add(sample);
+                    pending.Remove(sample);
+                    start = Math.Min(start, sample.UsedPercent - sample.DeltaPercent);
+                    end = Math.Max(end, sample.UsedPercent);
+                }
+                expanded = previousStart != start || previousEnd != end || connected.Length > 0;
+            } while (expanded);
+
+            // 历史上同一百分比区间可能保留多份观察，比较最完整一份，不能把重复记录相加。
+            var prior = overlaps.GroupBy(sample => (sample.UsedPercent, sample.DeltaPercent))
+                .Select(group => group.OrderByDescending(sample => sample.ModelResponseCount)
+                    .ThenByDescending(sample => sample.Usage.InputTokens).First()).ToArray();
+            var samePercentRange = prior.Length > 0 &&
+                replacements.Min(sample => sample.UsedPercent - sample.DeltaPercent) == start &&
+                replacements.Max(sample => sample.UsedPercent) == end &&
+                replacements.Sum(sample => sample.DeltaPercent) == prior.Sum(sample => sample.DeltaPercent);
+            var comparableTime = prior.Length > 0 &&
+                replacements.Max(sample => sample.Timestamp) >= prior.Max(sample => sample.Timestamp);
+            var missingDetails = false;
+            if (prior.All(SampleRepricer.HasCompleteUsage) && replacements.All(SampleRepricer.HasCompleteUsage))
+            {
+                var available = replacements.SelectMany(sample => sample.PricingUsages)
+                    .GroupBy(item => item.Usage).ToDictionary(group => group.Key, group => group.Count());
+                missingDetails = prior.SelectMany(sample => sample.PricingUsages).GroupBy(item => item.Usage)
+                    .Any(group => !available.TryGetValue(group.Key, out var count) || count < group.Count());
+            }
+            if (samePercentRange && comparableTime &&
+                (missingDetails ||
+                 replacements.Sum(sample => sample.ModelResponseCount) < prior.Sum(sample => sample.ModelResponseCount) ||
+                 replacements.Sum(sample => sample.Usage.InputTokens) < prior.Sum(sample => sample.Usage.InputTokens) ||
+                 replacements.Sum(sample => sample.Usage.OutputTokens) < prior.Sum(sample => sample.Usage.OutputTokens)))
+            {
+                rejected += replacements.Count;
+                continue;
+            }
+
+            // 新结果不能只覆盖旧聚合区间的一部分，否则既删旧区间又丢掉未重建的百分比。
+            if (prior.Any(sample => !replacements.Any(candidate =>
+                    candidate.UsedPercent >= sample.UsedPercent &&
+                    candidate.UsedPercent - candidate.DeltaPercent <= sample.UsedPercent - sample.DeltaPercent)) &&
+                !samePercentRange)
+            {
+                rejected += replacements.Count;
+                continue;
+            }
+            foreach (var old in overlaps) state.Samples.Remove(old);
+            state.Samples.AddRange(replacements);
+        }
+        return rejected;
     }
 
     /// <summary>

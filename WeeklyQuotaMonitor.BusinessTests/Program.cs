@@ -62,6 +62,9 @@ internal static class Program
             TestRepricingRetainsUnrecoverableHistory,
             TestPriceSwitchKeepsVisibleCurveUntilReady,
             TestHistoricalScanCancellationAndProgress,
+            TestHistoricalScanStaleFileTimeAcrossReset,
+            TestReplayRejectsReducedCoverage,
+            TestReplayCoverageAcrossSplitIntervals,
             TestPricingEditorRestoresBuiltInPrices,
             TestShortContextStandardPricing,
             TestLongContextStandardPricing,
@@ -1235,6 +1238,102 @@ internal static class Program
         Equal(1, facts.Responses.Count, "取消后最新扫描应正常完成");
         Equal((0, 1), progress.Values[0], "开始时报告文件总数");
         Equal((1, 1), progress.Values[^1], "结束时报告全部完成");
+    }
+
+    /// <summary>复现跨重置旧文件持续追加但修改时间不前进；同一读取器须发现新增完整记录，截短后不得复用旧索引。</summary>
+    private static void TestHistoricalScanStaleFileTimeAcrossReset()
+    {
+        var directory = CreateTemporaryDirectory();
+        var path = Path.Combine(directory, "rollout-stale.jsonl");
+        var start = new DateTimeOffset(2026, 9, 8, 1, 26, 12, TimeSpan.Zero);
+        var stale = start.AddHours(-2).UtcDateTime;
+        File.WriteAllLines(path, [TurnContextLine(start.AddHours(-1), "gpt-6-astra", "priority")]);
+        File.SetLastWriteTimeUtc(path, stale);
+        var reader = new RolloutLogReader();
+        Equal(0, reader.ReadHistoricalFacts(directory, start, start.AddHours(1), 10080).Responses.Count,
+            "只有旧上下文时没有新周响应");
+        File.AppendAllLines(path, [ResponseItemLine(start.AddMinutes(1)),
+            TokenCountLine(start.AddMinutes(2), 1000, 500, 0, 100, 0)]);
+        File.SetLastWriteTimeUtc(path, stale);
+        var first = reader.ReadHistoricalFacts(directory, start, start.AddHours(1), 10080);
+        Equal(1, first.Responses.Count, "mtime 早于重置但新周追加响应必须计入");
+        Equal(2.5m, first.Responses[0].CreditMultiplier, "跨重置上下文的 Fast 层级必须保留");
+        Equal(1, reader.ReadHistoricalFacts(directory, start, start.AddHours(1), 10080).Responses.Count,
+            "重复查询不得重复响应");
+        File.AppendAllText(path, ResponseItemLine(start.AddMinutes(3)) + "\n" +
+            TokenCountLine(start.AddMinutes(4), 2000, 1000, 0, 200, 0));
+        File.SetLastWriteTimeUtc(path, stale);
+        Equal(1, reader.ReadHistoricalFacts(directory, start, start.AddHours(1), 10080).Responses.Count,
+            "尾部半行不得提前计量");
+        File.AppendAllText(path, "\n");
+        File.SetLastWriteTimeUtc(path, stale);
+        Equal(2, reader.ReadHistoricalFacts(directory, start, start.AddHours(1), 10080).Responses.Count,
+            "补齐换行后必须增量发现第二次响应");
+        File.WriteAllLines(path, [TurnContextLine(start.AddHours(-1), "gpt-6-astra", "priority")]);
+        File.SetLastWriteTimeUtc(path, stale);
+        Equal(0, reader.ReadHistoricalFacts(directory, start, start.AddHours(1), 10080).Responses.Count,
+            "文件截短后不能复用旧响应时间索引");
+        File.AppendAllText(path, "[]\n");
+        File.SetLastWriteTimeUtc(path, stale);
+        Equal(1, reader.ReadHistoricalFacts(directory, start, start.AddHours(1), 10080).MalformedLineCount,
+            "无法分类的 JSON 根结构交给正常扫描报告，时间索引不得吞掉坏行");
+    }
+
+    /// <summary>复现新重放只含部分响应仍覆盖完整实时点；验证当前周和归档都拒绝退化且允许同等用量降价。</summary>
+    private static void TestReplayRejectsReducedCoverage()
+    {
+        var start = new DateTimeOffset(2026, 9, 8, 1, 26, 12, TimeSpan.Zero);
+        var complete = CurrentSample(start.AddMinutes(3), 1500m) with
+        { UsedPercent = 1, ModelResponseCount = 4, Usage = new(4000, 2000, 0, 400, 0) };
+        var partial = complete with { IntervalApiEquivalentUsd = 3m, EstimatedWeeklyQuotaUsd = 300m,
+            ModelResponseCount = 1, Usage = new(1000, 500, 0, 100, 0), SampleSource = "historical-replay" };
+        var result = new HistoricalReplayResult(start, start.AddHours(1), "codex", [partial],
+            2, 2, 0, 1, 0, 0, 0, [], [], 0);
+        var state = new MonitorState { Samples = [complete] };
+        HistoricalReplayCalculator.ApplyToState(state, result);
+        HistoricalReplayCalculator.ApplyToState(state, result);
+        Equal(complete, state.Samples.Single(), "部分响应不得覆盖完整点，也不能追加重复点");
+        Equal(1, state.HistoricalReplayCoverageRejectedIntervals, "拒绝覆盖必须持久化可见诊断");
+        var archive = new HistoricalArchiveReplayResult(start, start.AddDays(8), "codex", [result], 1, 0);
+        HistoricalArchiveReplayCalculator.ApplyToState(state, archive, 90, ["sessions"]);
+        Equal(complete, state.Samples.Single(), "归档重放也必须保留完整响应");
+        Equal(1, state.HistoricalArchiveReplayCoverageRejectedIntervals, "归档覆盖退化必须可见");
+        var cheaper = complete with { IntervalApiEquivalentUsd = 3m, EstimatedWeeklyQuotaUsd = 300m };
+        HistoricalReplayCalculator.ApplyToState(state, result with { Samples = [cheaper] });
+        Equal(cheaper, state.Samples.Single(), "用量完整时金额下降本身不得阻止合法重算");
+        Equal(0, state.HistoricalReplayCoverageRejectedIntervals, "覆盖恢复后清除本周拒绝提示");
+        HistoricalReplayCalculator.ApplyToState(state, result with
+        { Samples = [partial with { Timestamp = complete.Timestamp.AddSeconds(-30) }] });
+        Equal(1, state.Samples.Single().ModelResponseCount, "更早首次观察边界允许排除迟到响应");
+        var unit = new ResponsePricingUsage("gpt-6-astra", "priority", new(1000, 500, 0, 100, 0));
+        var detailed = complete with { PricingUsages = [unit, unit, unit, unit] };
+        var swapped = detailed with { PricingUsages = [unit, unit,
+            unit with { Usage = new(500, 250, 0, 50, 0) },
+            unit with { Usage = new(1500, 750, 0, 150, 0) }] };
+        state.Samples = [detailed];
+        HistoricalReplayCalculator.ApplyToState(state, result with { Samples = [swapped] });
+        Equal(detailed, state.Samples.Single(), "总 token 相等但逐响应缺失也不得冒充完整覆盖");
+    }
+
+    /// <summary>验证一个完整百分比区间拆成多个点时整体检查覆盖，不能用部分分段误删剩余区间。</summary>
+    private static void TestReplayCoverageAcrossSplitIntervals()
+    {
+        var start = DateTimeOffset.UtcNow.AddHours(-1);
+        var old = CurrentSample(start.AddMinutes(4), 1500m) with
+        { UsedPercent = 2, DeltaPercent = 2, ModelResponseCount = 4, Usage = new(4000, 2000, 0, 400, 0) };
+        var first = old with { Timestamp = start.AddMinutes(2), UsedPercent = 1, DeltaPercent = 1,
+            ModelResponseCount = 2, Usage = new(2000, 1000, 0, 200, 0) };
+        var second = first with { Timestamp = old.Timestamp, UsedPercent = 2 };
+        var result = new HistoricalReplayResult(start, start.AddHours(1), "codex", [first],
+            2, 2, 0, 2, 0, 0, 0, [], [], 0);
+        var state = new MonitorState { Samples = [old] };
+        HistoricalReplayCalculator.ApplyToState(state, result);
+        Equal(old, state.Samples.Single(), "不完整拆分必须保留整个旧区间");
+        HistoricalReplayCalculator.ApplyToState(state, result with { Samples = [first, second] });
+        Equal(2, state.Samples.Count, "完整拆分可替换旧区间");
+        Equal(4, state.Samples.Sum(sample => sample.ModelResponseCount), "拆分前后响应覆盖不减少");
+        HistoricalReplayCalculator.ApplyToState(state, result with { Samples = [old] });
+        Equal(old, state.Samples.Single(), "完整合并也可替换两个分段");
     }
 
     /// <summary>同步记录测试扫描进度，避免消息循环调度影响取消与完成断言。</summary>

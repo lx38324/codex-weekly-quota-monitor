@@ -187,4 +187,5 @@
   <data name="RepricingCoverage" xml:space="preserve"><value>已重算 {0} 个区间；{1} 个缺完整明细；{2} 项计价错误。</value></data>
   <data name="DiagnosticsImageCost" xml:space="preserve"><value>生图费用</value></data>
   <data name="ImageCostUnavailable" xml:space="preserve"><value>未计入：本地生图返回缺少图像用量明细，估值可能偏低。</value></data>
+  <data name="ReplayCoverageRetained" xml:space="preserve"><value>有 {0} 个重放区间响应覆盖退化，已保留旧样本，尚未确认重算完整。</value></data>
 </root>

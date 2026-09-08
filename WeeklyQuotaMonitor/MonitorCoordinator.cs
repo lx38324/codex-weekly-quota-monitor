@@ -400,7 +400,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     }
 
     /// <summary>
-    /// 选择周额度窗口、按变化决定是否扫描日志、生成样本并持久化状态。
+    /// 选择周额度窗口并串行完成增量扫描、重放和保存；重放后仅发布最终结果，不再拼接被覆盖的实时估值。
     /// </summary>
     /// <param name="container">account/rateLimits 的 result 或通知 params。</param>
     /// <param name="source">用于状态栏区分轮询和服务端通知的来源。</param>
@@ -433,11 +433,11 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         _lastRateLimit = snapshot;
         PruneExpiredSamples();
         _storage.SaveState(_state);
-        PublishView($"{source}：{replayStatus}{update.Status}");
+        PublishView($"{source}：{(string.IsNullOrEmpty(replayStatus) ? update.Status : replayStatus)}");
     }
 
     /// <summary>
-    /// 在重放算法或价格版本升级后，从当前周 rollout 自动重建历史样本并记录幂等迁移版本。
+    /// 从活动与归档日志重建历史，复用读取器的事件时间增量索引；换价取消时保留本轮读取器快照。
     /// </summary>
     /// <param name="snapshot">当前 App Server 权威周额度快照。</param>
     /// <returns>本轮完成重放时返回可见状态前缀，否则返回空字符串。</returns>
@@ -447,8 +447,8 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     {
         var roots = RolloutLogReader.DiscoverHistoricalSessionRoots(Settings.SessionRoot);
         var catalog = _pricingCatalog;
+        var historyReader = _rolloutReader;
         var historyDays = Settings.ChartHistoryDays;
-        var sessionRoot = Settings.SessionRoot;
         var archiveRequired = HistoricalArchiveReplayCalculator.IsReplayRequired(
             _state, historyDays, roots, catalog.PricingVersion);
         var currentRequired = HistoricalReplayCalculator.IsReplayRequired(_state, catalog.PricingVersion) ||
@@ -473,14 +473,14 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             {
                 PublishView(UiText.Get("RepricingCurrent"));
                 var progress = CreateReplayProgress("RepricingCurrent", cancellation);
-                var facts = await Task.Run(() => new RolloutLogReader(catalog).ReadHistoricalFacts(
-                    sessionRoot, windowStart, snapshot.SampledAt, snapshot.WindowDurationMinutes, token, progress), token);
+                var facts = await Task.Run(() => historyReader.ReadHistoricalFacts(
+                    roots, windowStart, snapshot.SampledAt, snapshot.WindowDurationMinutes, token, progress), token);
                 token.ThrowIfCancellationRequested();
                 var replay = HistoricalReplayCalculator.Build(snapshot, facts, _state.AuthoritativeRateLimitCheckpoints);
                 HistoricalReplayCalculator.ApplyToState(_state, replay);
                 _state.HistoricalReplayUnresolvedFileLengths = RolloutLogReader.CaptureFileLengths(replay.UnresolvedSourceFiles);
                 _storage.SaveState(_state);
-                statuses.Add($"当前周重放生成 {replay.Samples.Count} 个样本，未归因区间 {replay.UnattributedIntervalCount}；");
+                statuses.Add($"当前周重放生成 {replay.Samples.Count} 个候选样本，未归因区间 {replay.UnattributedIntervalCount}；");
             }
 
             if (archiveRequired)
@@ -491,7 +491,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
                 var archive = historyStart < windowStart
                     ? await Task.Run(() =>
                     {
-                        var facts = new RolloutLogReader(catalog).ReadHistoricalFacts(
+                        var facts = historyReader.ReadHistoricalFacts(
                             roots, historyStart, windowStart, snapshot.WindowDurationMinutes, token, progress);
                         token.ThrowIfCancellationRequested();
                         return HistoricalArchiveReplayCalculator.Build(snapshot.LimitId, snapshot.WindowDurationMinutes, facts, windowStart);
@@ -638,6 +638,9 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         if (displayedVersion != _pricingCatalog.PricingVersion)
             status = UiText.Get("RepricingShowingPrevious") + " " + status;
         if (!string.IsNullOrEmpty(_repricingNote)) status += " " + _repricingNote;
+        var rejectedCoverage = _state.HistoricalReplayCoverageRejectedIntervals +
+            _state.HistoricalArchiveReplayCoverageRejectedIntervals;
+        if (rejectedCoverage > 0) status += " " + UiText.Format("ReplayCoverageRetained", rejectedCoverage);
         var curve = RegressionCalculator.BuildCurve(
             samples,
             Settings.Regression,

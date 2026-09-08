@@ -5,7 +5,7 @@ namespace WeeklyQuotaMonitor.Core;
 /// </summary>
 public static class HistoricalArchiveReplayCalculator
 {
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
     private static readonly TimeSpan ResetClusterTolerance = TimeSpan.FromMinutes(1);
 
     /// <summary>
@@ -162,20 +162,13 @@ public static class HistoricalArchiveReplayCalculator
         int historyDays,
         IReadOnlyCollection<string> sourceRoots)
     {
+        var rejected = 0;
         foreach (var window in result.Windows)
         {
-            if (window.Samples.Count == 0) continue;
-            var firstSampleAt = window.Samples.Min(sample => sample.Timestamp);
-            var coveredIntervals = window.Samples.Select(sample =>
-                (Start: sample.UsedPercent - sample.DeltaPercent, End: sample.UsedPercent)).ToArray();
-            state.Samples.RemoveAll(sample =>
-                PublicApiPricing.IsSampleForVersion(sample, result.PricingVersion) &&
-                string.Equals(sample.LimitId, result.LimitId, StringComparison.Ordinal) &&
-                sample.Timestamp >= firstSampleAt &&
-                sample.Timestamp <= window.WindowEnd &&
-                coveredIntervals.Any(interval => sample.UsedPercent > interval.Start && sample.UsedPercent <= interval.End));
-            state.Samples.AddRange(window.Samples);
+            rejected += HistoricalReplayCalculator.MergeCoveredSamples(state, window);
         }
+
+        state.HistoricalArchiveReplayCoverageRejectedIntervals = rejected;
 
         state.Samples.Sort((left, right) => left.Timestamp.CompareTo(right.Timestamp));
         state.HistoricalArchiveReplayVersion = CurrentVersion;

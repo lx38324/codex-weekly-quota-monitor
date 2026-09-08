@@ -144,6 +144,7 @@ public sealed class MonitorState
     public List<decimal> HistoricalReplayUnattributedUsedPercents { get; set; } = [];
     public Dictionary<string, long> HistoricalReplayUnresolvedFileLengths { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public int HistoricalReplayMalformedLines { get; set; }
+    public int HistoricalReplayCoverageRejectedIntervals { get; set; }
     public int HistoricalArchiveReplayVersion { get; set; }
     public string HistoricalArchiveReplayPricingVersion { get; set; } = string.Empty;
     public DateTimeOffset? HistoricalArchiveReplayCompletedAt { get; set; }
@@ -155,6 +156,7 @@ public sealed class MonitorState
     public int HistoricalArchiveReplayUnpricedResponses { get; set; }
     public int HistoricalArchiveReplayUnattributedIntervals { get; set; }
     public int HistoricalArchiveReplayMalformedLines { get; set; }
+    public int HistoricalArchiveReplayCoverageRejectedIntervals { get; set; }
     public List<AuthoritativeRateLimitCheckpoint> AuthoritativeRateLimitCheckpoints { get; set; } = [];
     public bool RolloutFilesPrimed { get; set; }
     public Dictionary<string, FileCursorState> FileCursors { get; set; } = new(StringComparer.OrdinalIgnoreCase);

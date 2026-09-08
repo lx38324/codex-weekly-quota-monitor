@@ -187,4 +187,5 @@
   <data name="RepricingCoverage" xml:space="preserve"><value>Repriced {0} intervals; {1} lack complete details; {2} pricing errors.</value></data>
   <data name="DiagnosticsImageCost" xml:space="preserve"><value>Image generation cost</value></data>
   <data name="ImageCostUnavailable" xml:space="preserve"><value>Not included: local image results lack image usage details; estimates may be low.</value></data>
+  <data name="ReplayCoverageRetained" xml:space="preserve"><value>Response coverage regressed in {0} replay intervals. Previous samples retained; complete repricing is not confirmed.</value></data>
 </root>
