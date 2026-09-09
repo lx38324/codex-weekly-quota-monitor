@@ -1367,7 +1367,9 @@ internal static class Program
         quotaWindow.ApplyWindow();
         form.Show(); form.Scale(new SizeF(1.5F, 1.5F));
         form.MinimumSize = new Size(900, 600); form.ClientSize = new Size(1260, 860); Application.DoEvents();
-        Equal(true, FindControls<QuotaChartControl>(form).Single().Height >= 160, "150%受限视口下自定义日期区不得挤掉额度图表");
+        var customChart = FindControls<QuotaChartControl>(form).Single();
+        Console.WriteLine($"自定义窗口布局：client={form.ClientSize}; chart={customChart.Size}; editor={quotaWindow.Size}; font={form.Font}; dpi={form.DeviceDpi}; rows={string.Join(',', ((TableLayoutPanel)quotaWindow.Parent!).GetRowHeights())}; screen={Screen.FromControl(form).WorkingArea}");
+        Equal(true, customChart.Height >= 160, "150%受限视口下自定义日期区不得挤掉额度图表");
         form.Hide();
 
         SpeedSample[] responses = Enumerable.Range(0, 5).Select(i => new SpeedSample($"s{i}", now.AddDays(-8).AddMinutes(i).AddSeconds(-10),
