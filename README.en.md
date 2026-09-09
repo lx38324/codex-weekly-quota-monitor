@@ -30,6 +30,7 @@ The utility installs to `%LOCALAPPDATA%\CodexWeeklyQuotaMonitor`, registers curr
 The main window contains:
 
 - **Overview & trends** — quota, used/remaining percentage, reset time, samples, history curves, time filters, and token details.
+- **Speed monitor** — weighted TPS cards, per-model lines and interval details. Both quota and speed pages support custom local start/end times. Earlier speed windows backfill existing logs. Settings support time buckets or every N responses. TPS is an end-to-end proxy; TTFT is currently unavailable.
 - **Settings** — polling, data sources, regression, model pricing, language, theme, and startup.
 - **Diagnostics** — non-sensitive facts suitable for a GitHub issue.
 

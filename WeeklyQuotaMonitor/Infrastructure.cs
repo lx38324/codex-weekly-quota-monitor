@@ -110,6 +110,19 @@ public sealed class JsonStorage
     public void SaveState(MonitorState state) =>
         AtomicWrite(AppPaths.StateFile, JsonSerializer.Serialize(state, Options));
 
+    /// <summary>加载独立速度摘要；未知版本或损坏数据保留原错误，不覆盖为新空状态。</summary>
+    public SpeedState LoadSpeedState()
+    {
+        if (!File.Exists(AppPaths.SpeedFile)) return new();
+        var state = JsonSerializer.Deserialize<SpeedState>(File.ReadAllText(AppPaths.SpeedFile), Options)
+            ?? throw new InvalidDataException("speed.json 反序列化结果为空。");
+        if (state.Version != 1) throw new InvalidDataException("不支持的速度数据版本。");
+        return state;
+    }
+
+    /// <summary>原子保存独立速度文件，频繁速度更新不重写体积更大的额度历史。</summary>
+    public void SaveSpeedState(SpeedState state) => AtomicWrite(AppPaths.SpeedFile, JsonSerializer.Serialize(state, Options));
+
     /// <summary>
     /// 先写同目录临时文件再覆盖目标，避免进程退出留下半个 JSON。
     /// </summary>

@@ -25,6 +25,7 @@ public sealed class AppSettings
     public UiLanguage Language { get; set; } = UiLanguage.Auto;
     public UiTheme Theme { get; set; } = UiTheme.System;
     public RegressionOptions Regression { get; set; } = new();
+    public SpeedOptions Speed { get; set; } = new();
     public List<ModelPriceProfile> ModelPrices { get; set; } = PublicApiPricing.GetBuiltInProfiles().ToList();
 
     /// <summary>
@@ -46,6 +47,10 @@ public sealed class AppSettings
         if (Regression.SegmentWindowHours <= 0) errors.Add(UiText.Get("ValidationSegment"));
         if (Regression.GaussianBandwidthHours <= 0) errors.Add(UiText.Get("ValidationGaussian"));
         if (Regression.MaximumSampleUsd <= 0) errors.Add(UiText.Get("ValidationMaximum"));
+        if (Speed is null || !Enum.IsDefined(Speed.Mode) || Speed.BucketMinutes is < 1 or > 1440 ||
+            Speed.ResponsesPerBucket is < 1 or > 10000 || Speed.HistoryHours is < 1 or > 720 ||
+            !double.IsFinite(Speed.MinimumDurationSeconds) || Speed.MinimumDurationSeconds is < 1 or > 600)
+            errors.Add(UiText.Get("SpeedValidation"));
         ValidateModelPrices(errors);
         return errors;
     }
@@ -126,7 +131,7 @@ public sealed class AppSettings
 /// </summary>
 public static class AppSettingsMigration
 {
-    public const int CurrentVersion = 5;
+    public const int CurrentVersion = 6;
     public const decimal LegacyMaximumSampleUsd = 1000m;
     public const decimal DefaultMaximumSampleUsd = 10000m;
 
@@ -151,7 +156,7 @@ public static class AppSettingsMigration
             changed = true;
         }
 
-        if (settings.SettingsSchemaVersion < CurrentVersion &&
+        if (settings.SettingsSchemaVersion < 5 &&
             settings.Regression.MaximumSampleUsd == LegacyMaximumSampleUsd)
         {
             settings.Regression.MaximumSampleUsd = DefaultMaximumSampleUsd;
@@ -180,4 +185,5 @@ public static class AppPaths
     public static string SettingsFile { get; } = Path.Combine(DataDirectory, "settings.json");
     public static string StateFile { get; } = Path.Combine(DataDirectory, "state.json");
     public static string RuntimeLogFile { get; } = Path.Combine(DataDirectory, "runtime.log");
+    public static string SpeedFile { get; } = Path.Combine(DataDirectory, "speed.json");
 }

@@ -188,4 +188,48 @@
   <data name="DiagnosticsImageCost" xml:space="preserve"><value>生图费用</value></data>
   <data name="ImageCostUnavailable" xml:space="preserve"><value>未计入：本地生图返回缺少图像用量明细，估值可能偏低。</value></data>
   <data name="ReplayCoverageRetained" xml:space="preserve"><value>有 {0} 个重放区间响应覆盖退化，已保留旧样本，尚未确认重算完整。</value></data>
+  <data name="SpeedTitle" xml:space="preserve"><value>速度监测</value></data>
+  <data name="SpeedEnabled" xml:space="preserve"><value>启用独立速度监测</value></data>
+  <data name="SpeedMode" xml:space="preserve"><value>统计方式</value></data>
+  <data name="SpeedMinutes" xml:space="preserve"><value>时间段长度（分钟）</value></data>
+  <data name="SpeedCount" xml:space="preserve"><value>每组有效响应数</value></data>
+  <data name="SpeedHistory" xml:space="preserve"><value>速度历史保留（小时）</value></data>
+  <data name="SpeedMinimum" xml:space="preserve"><value>最短有效响应（秒）</value></data>
+  <data name="SpeedByTime" xml:space="preserve"><value>按固定时间段</value></data>
+  <data name="SpeedByCount" xml:space="preserve"><value>按每 N 次有效响应</value></data>
+  <data name="SpeedValidation" xml:space="preserve"><value>速度参数无效：时间段 1–1440 分钟，响应数 1–10000，历史 1–720 小时，最短耗时 1–600 秒。</value></data>
+  <data name="SpeedScanning" xml:space="preserve"><value>正在增量读取本地速度日志…</value></data>
+  <data name="SpeedUpdated" xml:space="preserve"><value>更新于 {0:HH:mm:ss} · 累计坏行 {1} · 无有效边界 {2}</value></data>
+  <data name="SpeedReadFailed" xml:space="preserve"><value>速度读取失败，保留已有结果：</value></data>
+  <data name="SpeedDisabled" xml:space="preserve"><value>速度监测已关闭。</value></data>
+  <data name="SpeedNoSamples" xml:space="preserve"><value>尚无满足条件的速度样本</value></data>
+  <data name="SpeedLatest" xml:space="preserve"><value>最近一组（{3} · {4}）：总输出 {0:N2} TPS · 可见输出 {1:N2} TPS · {2} 次响应</value></data>
+  <data name="SpeedMeasurementNote" xml:space="preserve"><value>端到端吞吐估计 = 总输出 token ÷ 总响应耗时（含等待、预填充和传输，扣除可识别工具等待）；不是纯解码速度。按模型及 Standard/Fast/unknown 分组；修改分组参数后重新汇总。</value></data>
+  <data name="SpeedTtftUnavailable" xml:space="preserve"><value>TTFT：不可用。本地 rollout 没有可靠的请求发出与首 token 时间戳，本版本未接入 OTel。</value></data>
+  <data name="SpeedRetained" xml:space="preserve"><value>保留 {0} 条响应摘要 · 仅统计耗时 ≥ {1} 秒 · 最近 {2} 小时；设置 → 速度监测可调整。</value></data>
+  <data name="SpeedStart" xml:space="preserve"><value>区间开始（本地）</value></data>
+  <data name="SpeedEnd" xml:space="preserve"><value>区间结束（本地）</value></data>
+  <data name="SpeedModel" xml:space="preserve"><value>模型</value></data>
+  <data name="SpeedTier" xml:space="preserve"><value>速度层级</value></data>
+  <data name="SpeedSamples" xml:space="preserve"><value>响应数</value></data>
+  <data name="SpeedTotalTps" xml:space="preserve"><value>总输出 TPS</value></data>
+  <data name="SpeedVisibleTps" xml:space="preserve"><value>可见输出 TPS</value></data>
+  <data name="SpeedSeconds" xml:space="preserve"><value>累计响应秒数</value></data>
+  <data name="SpeedBucketStatus" xml:space="preserve"><value>分组状态</value></data>
+  <data name="SpeedComplete" xml:space="preserve"><value>已完成</value></data>
+  <data name="SpeedPartial" xml:space="preserve"><value>部分</value></data>
+  <data name="SpeedAllModels" xml:space="preserve"><value>全部模型</value></data>
+  <data name="SpeedLineStyles" xml:space="preserve"><value>实线 Standard · 虚线 Fast · 点线 unknown · 纵轴 TPS</value></data>
+  <data name="TimeRangeCustom" xml:space="preserve"><value>自定义起止时间</value></data>
+  <data name="WindowFrom" xml:space="preserve"><value>开始（本地）</value></data>
+  <data name="WindowTo" xml:space="preserve"><value>结束（本地）</value></data>
+  <data name="WindowApply" xml:space="preserve"><value>应用时间窗</value></data>
+  <data name="WindowInvalid" xml:space="preserve"><value>开始须早于结束，且不能选取夏令时无效或歧义时间。原窗口未改变。</value></data>
+  <data name="SpeedRetainedRange" xml:space="preserve"><value>全部缓存响应</value></data>
+  <data name="SpeedWindowWeighted" xml:space="preserve"><value>当前时间窗与模型筛选 · 加权平均</value></data>
+  <data name="SpeedVisibleCaption" xml:space="preserve"><value>扣除推理 token · 相同计时口径</value></data>
+  <data name="SpeedGroupCaption" xml:space="preserve"><value>{0:N0} 个分组 · {1:N0} 个模型</value></data>
+  <data name="SpeedCoverage" xml:space="preserve"><value>缓存响应覆盖：{0} — {1}（本地） · {2:N0} 条摘要；更早窗口自动补读现存日志。</value></data>
+  <data name="SpeedShortNote" xml:space="preserve"><value>端到端 TPS 估计，非纯解码速度 · TTFT：不可用 · 悬停查看测量口径</value></data>
+  <data name="SpeedWindowLoading" xml:space="preserve"><value>所选时间窗尚未完整扫描；正在等待后台补读，当前仅展示已缓存结果（速度监测需启用）。</value></data>
 </root>

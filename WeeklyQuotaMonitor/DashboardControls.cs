@@ -399,6 +399,7 @@ public sealed class ApplicationSidebar : Panel
         _navigation.WrapContents = false;
         _navigation.Padding = new Padding(0, 6, 0, 0);
         AddNavigation(DashboardSection.Dashboard, SidebarIcon.Overview);
+        AddNavigation(DashboardSection.Speed, SidebarIcon.Speed);
         AddNavigation(DashboardSection.Settings, SidebarIcon.Settings);
         AddNavigation(DashboardSection.Diagnostics, SidebarIcon.Diagnostics);
 
@@ -428,6 +429,7 @@ public sealed class ApplicationSidebar : Panel
     {
         _product.Text = UiText.Get("ProductName");
         _buttons[DashboardSection.Dashboard].SetText(UiText.Get("TabDashboard"));
+        _buttons[DashboardSection.Speed].SetText(UiText.Get("SpeedTitle"));
         _buttons[DashboardSection.Settings].SetText(UiText.Get("TabSettings"));
         _buttons[DashboardSection.Diagnostics].SetText(UiText.Get("TabDiagnostics"));
     }
@@ -516,6 +518,7 @@ public sealed class ApplicationSidebar : Panel
 public enum SidebarIcon
 {
     Overview,
+    Speed,
     Settings,
     Diagnostics
 }
@@ -664,6 +667,10 @@ public sealed class SidebarNavigationButton : Control
         };
         switch (_icon)
         {
+            case SidebarIcon.Speed:
+                graphics.DrawArc(pen, bounds, 180, 180);
+                graphics.DrawLine(pen, bounds.Left + bounds.Width / 2, bounds.Bottom - 3, bounds.Right - 3, bounds.Top + 4);
+                break;
             case SidebarIcon.Overview:
                 graphics.DrawRectangle(pen, bounds.Left + 1, bounds.Top + 1, 7, 7);
                 graphics.DrawRectangle(pen, bounds.Left + 12, bounds.Top + 1, 7, 7);

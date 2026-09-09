@@ -13,6 +13,15 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     private PricingCatalog _pricingCatalog;
     private readonly SynchronizationContext _uiContext;
     private readonly System.Windows.Forms.Timer _pollTimer;
+    private readonly System.Windows.Forms.Timer _speedTimer;
+    private readonly CancellationTokenSource _speedCancellation = new();
+    private SpeedState _speedState;
+    private Task<SpeedState>? _speedTask;
+    private volatile bool _speedFilesChanged = true;
+    private DateTimeOffset _lastSpeedCheck;
+    private string _speedStatus = string.Empty;
+    private DateTimeOffset? _requestedSpeedStart;
+    private string _lastStatus = "正在启动监控。";
     private CodexAppServerClient? _appServer;
     private FileSystemWatcher? _rolloutWatcher;
     private volatile bool _rolloutFilesChanged;
@@ -50,8 +59,11 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         _pricingCatalog = PublicApiPricing.CreateCatalog(Settings.ModelPrices);
         _rolloutReader = new RolloutLogReader(_pricingCatalog);
         _state = _storage.LoadState(_pricingCatalog.PricingVersion);
+        _speedState = _storage.LoadSpeedState();
         _pollTimer = new System.Windows.Forms.Timer();
         _pollTimer.Tick += PollTimerTick;
+        _speedTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+        _speedTimer.Tick += SpeedTimerTick;
         CurrentView = BuildView("正在启动监控。");
     }
 
@@ -71,6 +83,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         PrimeRolloutFilesIfNeeded();
         ConfigureRolloutWatcher();
         _pollTimer.Start();
+        _speedTimer.Start();
         await RefreshNowAsync();
     }
 
@@ -109,7 +122,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         {
             return;
         }
-        if (_polling || _notificationProcessing)
+        if (_polling || _notificationProcessing || _speedTask is { IsCompleted: false })
         {
             _refreshQueued = true;
             return;
@@ -298,6 +311,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             !string.Equals(Settings.CodexArguments, settings.CodexArguments, StringComparison.Ordinal) ||
             sessionRootChanged;
         Settings = settings;
+        _speedFilesChanged = true;
         if (pricingChanged)
         {
             _replayCancellation?.Cancel();
@@ -576,16 +590,76 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     /// </summary>
     /// <param name="sender">触发文件事件的监视器。</param>
     /// <param name="e">发生变化的文件事件。</param>
-    private void MarkRolloutFilesChanged(object sender, FileSystemEventArgs e) =>
+    private void MarkRolloutFilesChanged(object sender, FileSystemEventArgs e)
+    {
         _rolloutFilesChanged = true;
+        _speedFilesChanged = true;
+    }
 
     /// <summary>
     /// 文件监视器报告缓冲区错误时请求下一轮重新检查历史事实，不在后台线程读取状态。
     /// </summary>
     /// <param name="sender">报告错误的文件监视器。</param>
     /// <param name="e">监视器错误事件。</param>
-    private void MarkRolloutWatcherError(object sender, ErrorEventArgs e) =>
+    private void MarkRolloutWatcherError(object sender, ErrorEventArgs e)
+    {
         _rolloutFilesChanged = true;
+        _speedFilesChanged = true;
+    }
+
+    /// <summary>扩大当前窗口需要的速度保留范围，下一次后台扫描自动补读历史，不修改用户设置或额度状态。</summary>
+    public void RequestSpeedHistory(DateTimeOffset start)
+    {
+        if (_requestedSpeedStart is null || start < _requestedSpeedStart)
+        { _requestedSpeedStart = start; _speedFilesChanged = true; }
+    }
+
+    /// <summary>将窗口起点换算为扫描保留时长，至少覆盖默认设置；额外留一小时避免滚动边界丢失。</summary>
+    private int SpeedHistoryHours() => Math.Max(Settings.Speed.HistoryHours, _requestedSpeedStart is { } start
+        ? Math.Max(1, checked((int)Math.Ceiling((DateTimeOffset.Now - start).TotalHours) + 1)) : 1);
+
+    /// <summary>独立读取速度日志，文件事件去抖为五秒、六十秒兜底检查；断网不阻止本地计量，失败保留旧游标。</summary>
+    private async void SpeedTimerTick(object? sender, EventArgs e)
+    {
+        if (_disposed || !Settings.Speed.Enabled || _polling || _notificationProcessing || _speedTask is not null) return;
+        if (!_speedFilesChanged && DateTimeOffset.Now - _lastSpeedCheck < TimeSpan.FromSeconds(60)) return;
+        _speedFilesChanged = false;
+        _lastSpeedCheck = DateTimeOffset.Now;
+        var root = Settings.SessionRoot;
+        var hours = SpeedHistoryHours();
+        var previous = _speedState;
+        try
+        {
+            _speedStatus = UiText.Get("SpeedScanning");
+            CurrentView = BuildView(_lastStatus);
+            ViewUpdated?.Invoke(CurrentView);
+            _speedTask = Task.Run(() => SpeedMonitoring.Scan(previous,
+                RolloutLogReader.DiscoverHistoricalSessionRoots(root), DateTimeOffset.Now, hours, _speedCancellation.Token));
+            var updated = await _speedTask;
+            if (_disposed || !Settings.Speed.Enabled || root != Settings.SessionRoot || hours != SpeedHistoryHours()) return;
+            _storage.SaveSpeedState(updated);
+            _speedState = updated;
+            _speedStatus = UiText.Format("SpeedUpdated", updated.UpdatedAt!.Value.LocalDateTime,
+                updated.MalformedLines, updated.MissingBoundaries);
+            if (!string.IsNullOrEmpty(updated.LastIssue)) _speedStatus += " · " + updated.LastIssue;
+        }
+        catch (OperationCanceledException) when (_speedCancellation.IsCancellationRequested) { }
+        catch (Exception exception) when (IsLocalDataFailure(exception))
+        {
+            _speedStatus = UiText.Get("SpeedReadFailed") + " " + exception.Message;
+            RuntimeLog.Write(_speedStatus);
+        }
+        finally
+        {
+            _speedTask = null;
+            if (!_disposed)
+            {
+                CurrentView = BuildView(_lastStatus);
+                ViewUpdated?.Invoke(CurrentView);
+                ScheduleQueuedRefresh();
+            }
+        }
+    }
 
     /// <summary>
     /// 根据图表保留天数删除过期样本，限制长期常驻状态文件大小。
@@ -602,6 +676,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     /// <param name="status">本轮可见运行状态。</param>
     private void PublishView(string status)
     {
+        _lastStatus = status;
         CurrentView = BuildView(status);
         RuntimeLog.Write(status);
         ViewUpdated?.Invoke(CurrentView);
@@ -663,6 +738,10 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         {
             PricingVersion = displayedVersion,
             ShowingPreviousPrices = displayedVersion != _pricingCatalog.PricingVersion,
+            SpeedSamples = Settings.Speed.Enabled ? _speedState?.Samples.ToArray() ?? [] : [],
+            SpeedHistoryHours = _speedState?.HistoryHours ?? 0,
+            SpeedSampleCount = _speedState?.Samples.Count ?? 0,
+            SpeedStatus = Settings.Speed.Enabled ? _speedStatus : UiText.Get("SpeedDisabled"),
             RepricingProgressPercent = _replayProgressPercent,
             OfficialLongContextEstimatedWeeklyQuotaUsd =
                 RegressionCalculator.CurrentEstimate(officialLongContextCurve),
@@ -698,6 +777,9 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _disposed = true;
+        _speedCancellation.Cancel();
+        _speedTimer.Stop();
+        _speedTimer.Dispose();
         _replayCancellation?.Cancel();
         _pollTimer.Stop();
         _pollTimer.Dispose();

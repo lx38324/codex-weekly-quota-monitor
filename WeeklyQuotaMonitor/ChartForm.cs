@@ -9,7 +9,8 @@ public enum DashboardSection
 {
     Dashboard,
     Settings,
-    Diagnostics
+    Diagnostics,
+    Speed
 }
 
 /// <summary>
@@ -23,6 +24,8 @@ public sealed class ChartForm : Form
     private readonly Panel _dashboardPage = new() { Dock = DockStyle.Fill };
     private readonly Panel _settingsPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
     private readonly Panel _diagnosticsPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
+    private readonly Panel _speedPage = new() { Dock = DockStyle.Fill };
+    private SpeedPanel? _speedPanel;
     private readonly MetricCard _baseEstimateCard = new(MetricCardTone.Primary, MetricCardStyle.Hero);
     private readonly MetricCard _usedCard = new(MetricCardTone.Warning);
     private readonly MetricCard _remainingCard = new(MetricCardTone.Positive);
@@ -46,8 +49,10 @@ public sealed class ChartForm : Form
     private readonly Label _summary = new() { Name = "HistorySummaryLabel" };
     private readonly Label _timeRangeLabel = new();
     private readonly ComboBox _timeRange = new() { Name = "HistoryRangeComboBox" };
+    private readonly CustomTimeWindowControl _customWindow = new() { Visible = false, Name = "QuotaCustomWindow" };
+    public event Action<DateTimeOffset>? SpeedHistoryRequested;
     private readonly Panel _trendFrame = new() { Dock = DockStyle.Fill, Padding = new Padding(1) };
-    private readonly TableLayoutPanel _trendContent = new() { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4 };
+    private readonly TableLayoutPanel _trendContent = new() { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5 };
     private readonly QuotaChartControl _chart = new();
     private readonly DataGridView _grid = new();
     private readonly CheckBox _showBaseSamples = SeriesCheckBox(Color.FromArgb(14, 165, 233));
@@ -85,7 +90,7 @@ public sealed class ChartForm : Form
         _dashboardPage.Controls.Add(BuildDashboardPage());
         _settingsPage.Controls.Add(_settingsPanel);
         _diagnosticsPage.Controls.Add(_diagnosticsPanel);
-        _contentHost.Controls.AddRange([_dashboardPage, _settingsPage, _diagnosticsPage]);
+        _contentHost.Controls.AddRange([_dashboardPage, _settingsPage, _diagnosticsPage, _speedPage]);
         _sidebar.SectionRequested += SelectSection;
 
         var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
@@ -223,11 +228,13 @@ public sealed class ChartForm : Form
         _trendContent.RowStyles.Add(new(SizeType.AutoSize));
         _trendContent.RowStyles.Add(new(SizeType.AutoSize));
         _trendContent.RowStyles.Add(new(SizeType.AutoSize));
+        _trendContent.RowStyles.Add(new(SizeType.AutoSize));
         _trendContent.RowStyles.Add(new(SizeType.Percent, 100));
         _trendContent.Controls.Add(_regressionEstimate, 0, 0);
         _trendContent.Controls.Add(_summary, 0, 1);
         _trendContent.Controls.Add(options, 0, 2);
-        _trendContent.Controls.Add(dataStack, 0, 3);
+        _trendContent.Controls.Add(_customWindow, 0, 3);
+        _trendContent.Controls.Add(dataStack, 0, 4);
         _trendFrame.Margin = new Padding(4, 0, 4, 0);
         _trendFrame.Controls.Add(_trendContent);
         return _trendFrame;
@@ -257,7 +264,12 @@ public sealed class ChartForm : Form
     /// </summary>
     private void ConfigureTimeRange()
     {
-        _timeRange.SelectedIndexChanged += (_, _) => RefreshHistoryPage();
+        _timeRange.SelectedIndexChanged += (_, _) =>
+        {
+            _customWindow.Visible = SelectedHistoryRange() == HistoryRange.Custom;
+            RefreshHistoryPage();
+        };
+        _customWindow.WindowApplied += RefreshHistoryPage;
         BindTimeRanges(HistoryRange.Days30);
     }
 
@@ -397,14 +409,22 @@ public sealed class ChartForm : Form
     /// <param name="section">需要显示的总览、历史、设置或诊断页面。</param>
     private void SelectSection(DashboardSection section)
     {
+        if (section == DashboardSection.Speed && _speedPanel is null)
+        {
+            _speedPanel = new SpeedPanel();
+            _speedPanel.HistoryRequested += start => SpeedHistoryRequested?.Invoke(start);
+            _speedPage.Controls.Add(_speedPanel);
+            if (_view is not null) _speedPanel.UpdateView(_view, _settings.Speed);
+        }
         var target = section switch
         {
             DashboardSection.Dashboard => _dashboardPage,
             DashboardSection.Settings => _settingsPage,
             DashboardSection.Diagnostics => _diagnosticsPage,
+            DashboardSection.Speed => _speedPage,
             _ => throw new InvalidOperationException($"不支持的主窗口页面：{section}。")
         };
-        foreach (var page in new[] { _dashboardPage, _settingsPage, _diagnosticsPage })
+        foreach (var page in new[] { _dashboardPage, _settingsPage, _diagnosticsPage, _speedPage })
         {
             page.Visible = ReferenceEquals(page, target);
         }
@@ -457,6 +477,14 @@ public sealed class ChartForm : Form
         RefreshDashboardPage();
         RefreshHistoryPage();
         _diagnosticsPanel.UpdateView(_view, _settings);
+        _speedPanel?.UpdateView(_view, _settings.Speed);
+    }
+
+    /// <summary>打开速度页，供托盘和独立窗口调用；数据读取由协调器负责。</summary>
+    public void ShowSpeedTab()
+    {
+        SelectSection(DashboardSection.Speed);
+        ShowWindow();
     }
 
     /// <summary>
@@ -505,9 +533,11 @@ public sealed class ChartForm : Form
             HistoryRange.Hours24 => DateTimeOffset.Now.AddHours(-24),
             HistoryRange.Days7 => DateTimeOffset.Now.AddDays(-7),
             HistoryRange.Days30 => DateTimeOffset.Now.AddDays(-30),
+            HistoryRange.Custom => _customWindow.Start,
             _ => throw new InvalidOperationException($"不支持的历史时间范围：{selected.Range}。")
         };
-        var samples = _view.Samples.Where(sample => sample.Timestamp >= cutoff).ToArray();
+        var end = selected.Range == HistoryRange.Custom ? _customWindow.End : DateTimeOffset.Now;
+        var samples = _view.Samples.Where(sample => sample.Timestamp >= cutoff && sample.Timestamp <= end).ToArray();
         var baseAnalysis = RegressionCalculator.Analyze(
             samples,
             _settings.Regression,
@@ -657,12 +687,14 @@ public sealed class ChartForm : Form
     /// <param name="selected">需要继续选中的时间范围。</param>
     private void BindTimeRanges(HistoryRange selected)
     {
+        _customWindow.ApplyLanguage();
         _timeRange.DataSource = new[]
         {
             new RangeChoice(HistoryRange.All, UiText.Get("TimeRangeAll")),
             new RangeChoice(HistoryRange.Hours24, UiText.Get("TimeRange24Hours")),
             new RangeChoice(HistoryRange.Days7, UiText.Get("TimeRange7Days")),
-            new RangeChoice(HistoryRange.Days30, UiText.Get("TimeRange30Days"))
+            new RangeChoice(HistoryRange.Days30, UiText.Get("TimeRange30Days")),
+            new RangeChoice(HistoryRange.Custom, UiText.Get("TimeRangeCustom"))
         };
         _timeRange.SelectedItem = ((RangeChoice[])_timeRange.DataSource)
             .Single(choice => choice.Range == selected);
@@ -828,7 +860,8 @@ public sealed class ChartForm : Form
         All,
         Hours24,
         Days7,
-        Days30
+        Days30,
+        Custom
     }
 
     /// <summary>

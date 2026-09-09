@@ -452,7 +452,7 @@ public sealed partial class RolloutLogReader
     /// <param name="offset">已持久化的起始字节位置。</param>
     /// <param name="processLine">逐行处理以换行结束的非空完整记录。</param>
     /// <returns>最后一条完整行之后的字节位置；末尾半行留待下次重新读取。</returns>
-    private static long ProcessCompleteLines(string path, long offset, Action<string> processLine)
+    internal static long ProcessCompleteLines(string path, long offset, Action<string> processLine)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         if (stream.Length <= offset)

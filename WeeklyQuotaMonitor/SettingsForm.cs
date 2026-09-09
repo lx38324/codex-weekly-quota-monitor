@@ -28,6 +28,12 @@ public sealed class SettingsPanel : UserControl
         AppSettingsMigration.DefaultMaximumSampleUsd,
         2);
     private readonly PricingEditorPanel _pricingEditor = new();
+    private readonly CheckBox _speedEnabled = new() { Name = "SpeedEnabled" };
+    private readonly ComboBox _speedMode = ChoiceBox();
+    private readonly NumericUpDown _speedMinutes = Number(1, 1440, 5, 0);
+    private readonly NumericUpDown _speedCount = Number(1, 10000, 20, 0);
+    private readonly NumericUpDown _speedHours = Number(1, 720, 24, 0);
+    private readonly NumericUpDown _speedMinimum = Number(1, 600, 1, 1);
     private readonly ComboBox _language = ChoiceBox();
     private readonly ComboBox _theme = ChoiceBox();
     private readonly Label _note = new() { AutoSize = true, MaximumSize = new Size(780, 0) };
@@ -90,6 +96,12 @@ public sealed class SettingsPanel : UserControl
         _gaussianHours.Value = (decimal)settings.Regression.GaussianBandwidthHours;
         _maximumSampleUsd.Value = settings.Regression.MaximumSampleUsd;
         _pricingEditor.LoadProfiles(settings.ModelPrices);
+        _speedEnabled.Checked = settings.Speed.Enabled;
+        _speedMinutes.Value = settings.Speed.BucketMinutes;
+        _speedCount.Value = settings.Speed.ResponsesPerBucket;
+        _speedHours.Value = settings.Speed.HistoryHours;
+        _speedMinimum.Value = (decimal)settings.Speed.MinimumDurationSeconds;
+        BindSpeedMode(settings.Speed.Mode);
         BindChoices(settings.Regression.Mode, settings.Language, settings.Theme);
         _saveStatus.Text = string.Empty;
     }
@@ -115,6 +127,7 @@ public sealed class SettingsPanel : UserControl
         _startWithWindows.Text = UiText.Get("SettingsAutostart");
         _enableOfficialLongContextEstimate.Text = UiText.Get("SettingsOfficialLongContextOption");
         _pricingEditor.ApplyLocalization();
+        BindSpeedMode(_speedMode.SelectedValue is SpeedAggregationMode mode ? mode : _activeSettings.Speed.Mode);
         _note.Text = UiText.Format(
             "SettingsNote",
             CodexExecutableResolver.DesktopPackageLocator,
@@ -152,6 +165,13 @@ public sealed class SettingsPanel : UserControl
             ("SettingsSegmentHours", _segmentHours),
             ("SettingsGaussianHours", _gaussianHours),
             ("SettingsMaximumSample", _maximumSampleUsd)]);
+        AddSection("SpeedTitle", [
+            ("SpeedEnabled", (Control)_speedEnabled),
+            ("SpeedMode", _speedMode),
+            ("SpeedMinutes", _speedMinutes),
+            ("SpeedCount", _speedCount),
+            ("SpeedHistory", _speedHours),
+            ("SpeedMinimum", _speedMinimum)]);
         var pricing = new TabPage();
         _localizedControls[pricing] = "SettingsPricing";
         pricing.Controls.Add(_pricingEditor);
@@ -239,6 +259,13 @@ public sealed class SettingsPanel : UserControl
             Language = SelectedLanguage(),
             Theme = SelectedTheme(),
             ModelPrices = _pricingEditor.GetProfiles().ToList(),
+            Speed = new SpeedOptions
+            {
+                Enabled = _speedEnabled.Checked,
+                Mode = (SpeedAggregationMode)(_speedMode.SelectedValue ?? SpeedAggregationMode.TimeWindow),
+                BucketMinutes = (int)_speedMinutes.Value, ResponsesPerBucket = (int)_speedCount.Value,
+                HistoryHours = (int)_speedHours.Value, MinimumDurationSeconds = (double)_speedMinimum.Value
+            },
             Regression = new RegressionOptions
             {
                 Mode = SelectedRegressionMode(),
@@ -395,6 +422,17 @@ public sealed class SettingsPanel : UserControl
     /// </summary>
     private UiLanguage SelectedLanguage() =>
         _language.SelectedValue is UiLanguage language ? language : _activeSettings.Language;
+
+    /// <summary>刷新速度分组下拉文本并保留当前选择，切换语言不会改变统计口径。</summary>
+    private void BindSpeedMode(SpeedAggregationMode selected)
+    {
+        _speedMode.DataSource = new[]
+        {
+            new Choice<SpeedAggregationMode>(SpeedAggregationMode.TimeWindow, UiText.Get("SpeedByTime")),
+            new Choice<SpeedAggregationMode>(SpeedAggregationMode.ResponseCount, UiText.Get("SpeedByCount"))
+        };
+        _speedMode.SelectedValue = selected;
+    }
 
     /// <summary>
     /// 返回当前主题下拉项的枚举值。

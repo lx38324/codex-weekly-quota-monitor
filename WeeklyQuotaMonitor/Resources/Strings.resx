@@ -188,4 +188,48 @@
   <data name="DiagnosticsImageCost" xml:space="preserve"><value>Image generation cost</value></data>
   <data name="ImageCostUnavailable" xml:space="preserve"><value>Not included: local image results lack image usage details; estimates may be low.</value></data>
   <data name="ReplayCoverageRetained" xml:space="preserve"><value>Response coverage regressed in {0} replay intervals. Previous samples retained; complete repricing is not confirmed.</value></data>
+  <data name="SpeedTitle" xml:space="preserve"><value>Speed monitor</value></data>
+  <data name="SpeedEnabled" xml:space="preserve"><value>Enable independent speed monitoring</value></data>
+  <data name="SpeedMode" xml:space="preserve"><value>Aggregation</value></data>
+  <data name="SpeedMinutes" xml:space="preserve"><value>Time bucket (minutes)</value></data>
+  <data name="SpeedCount" xml:space="preserve"><value>Responses per bucket</value></data>
+  <data name="SpeedHistory" xml:space="preserve"><value>Speed history (hours)</value></data>
+  <data name="SpeedMinimum" xml:space="preserve"><value>Minimum response duration (seconds)</value></data>
+  <data name="SpeedByTime" xml:space="preserve"><value>Fixed time buckets</value></data>
+  <data name="SpeedByCount" xml:space="preserve"><value>Every N valid responses</value></data>
+  <data name="SpeedValidation" xml:space="preserve"><value>Invalid speed settings: 1–1440 minutes, 1–10000 responses, 1–720 history hours, 1–600 minimum seconds.</value></data>
+  <data name="SpeedScanning" xml:space="preserve"><value>Reading local speed logs incrementally…</value></data>
+  <data name="SpeedUpdated" xml:space="preserve"><value>Updated {0:HH:mm:ss} · Malformed lines {1} · Missing boundaries {2}</value></data>
+  <data name="SpeedReadFailed" xml:space="preserve"><value>Speed scan failed; previous results retained:</value></data>
+  <data name="SpeedDisabled" xml:space="preserve"><value>Speed monitoring is disabled.</value></data>
+  <data name="SpeedNoSamples" xml:space="preserve"><value>No eligible speed samples yet</value></data>
+  <data name="SpeedLatest" xml:space="preserve"><value>Latest ({3} · {4}): total {0:N2} TPS · visible {1:N2} TPS · {2} responses</value></data>
+  <data name="SpeedMeasurementNote" xml:space="preserve"><value>End-to-end throughput proxy = output tokens / summed response durations. Includes waiting, prefill and transport; excludes identifiable tool waits. Not pure decoding speed. Grouped by model and Standard/Fast/unknown. Settings changes regroup retained data.</value></data>
+  <data name="SpeedTtftUnavailable" xml:space="preserve"><value>TTFT: unavailable. Local rollout logs lack reliable request-send and first-token timestamps. This version does not collect OTel.</value></data>
+  <data name="SpeedRetained" xml:space="preserve"><value>{0} retained responses · Duration ≥ {1} seconds · Last {2} hours. Configure in Settings → Speed monitor.</value></data>
+  <data name="SpeedStart" xml:space="preserve"><value>Start (local)</value></data>
+  <data name="SpeedEnd" xml:space="preserve"><value>End (local)</value></data>
+  <data name="SpeedModel" xml:space="preserve"><value>Model</value></data>
+  <data name="SpeedTier" xml:space="preserve"><value>Service tier</value></data>
+  <data name="SpeedSamples" xml:space="preserve"><value>Responses</value></data>
+  <data name="SpeedTotalTps" xml:space="preserve"><value>Total TPS</value></data>
+  <data name="SpeedVisibleTps" xml:space="preserve"><value>Visible TPS</value></data>
+  <data name="SpeedSeconds" xml:space="preserve"><value>Response seconds</value></data>
+  <data name="SpeedBucketStatus" xml:space="preserve"><value>Bucket status</value></data>
+  <data name="SpeedComplete" xml:space="preserve"><value>Complete</value></data>
+  <data name="SpeedPartial" xml:space="preserve"><value>Partial</value></data>
+  <data name="SpeedAllModels" xml:space="preserve"><value>All models</value></data>
+  <data name="SpeedLineStyles" xml:space="preserve"><value>Solid: Standard · Dashed: Fast · Dotted: unknown · Y: TPS</value></data>
+  <data name="TimeRangeCustom" xml:space="preserve"><value>Custom dates</value></data>
+  <data name="WindowFrom" xml:space="preserve"><value>From (local)</value></data>
+  <data name="WindowTo" xml:space="preserve"><value>To (local)</value></data>
+  <data name="WindowApply" xml:space="preserve"><value>Apply window</value></data>
+  <data name="WindowInvalid" xml:space="preserve"><value>Start must precede end; invalid or ambiguous DST times are not accepted. Previous window retained.</value></data>
+  <data name="SpeedRetainedRange" xml:space="preserve"><value>All cached responses</value></data>
+  <data name="SpeedWindowWeighted" xml:space="preserve"><value>Selected window and models · weighted mean</value></data>
+  <data name="SpeedVisibleCaption" xml:space="preserve"><value>Reasoning excluded · same duration basis</value></data>
+  <data name="SpeedGroupCaption" xml:space="preserve"><value>{0:N0} buckets · {1:N0} models</value></data>
+  <data name="SpeedCoverage" xml:space="preserve"><value>Cached response coverage: {0} — {1} (local) · {2:N0} summaries. Earlier windows backfill existing logs.</value></data>
+  <data name="SpeedShortNote" xml:space="preserve"><value>End-to-end TPS proxy, not decoding speed · TTFT unavailable · Hover for measurement details</value></data>
+  <data name="SpeedWindowLoading" xml:space="preserve"><value>Window not fully scanned. Waiting for background backfill; only cached results shown (speed monitoring must be enabled).</value></data>
 </root>

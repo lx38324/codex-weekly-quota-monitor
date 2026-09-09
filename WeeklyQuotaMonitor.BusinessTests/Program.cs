@@ -62,6 +62,11 @@ internal static class Program
             TestRepricingRetainsUnrecoverableHistory,
             TestPriceSwitchKeepsVisibleCurveUntilReady,
             TestHistoricalScanCancellationAndProgress,
+            TestSpeedWeightedBuckets,
+            TestSpeedToolWaitAndPersistence,
+            TestSpeedPanelAndSettings,
+            TestCustomTimeWindows,
+            TestSpeedWindowBackfill,
             TestHistoricalScanStaleFileTimeAcrossReset,
             TestReplayRejectsReducedCoverage,
             TestReplayCoverageAcrossSplitIntervals,
@@ -297,7 +302,7 @@ internal static class Program
                 (int)Math.Round(730 * scale));
             form.PerformLayout();
             Equal(1, FindControls<ApplicationSidebar>(form).Count(), $"{scale:P0} 缩放下应保留唯一科技侧栏");
-            Equal(3, FindControls<SidebarNavigationButton>(form).Count(), $"{scale:P0} 缩放下应保留三个业务入口");
+            Equal(4, FindControls<SidebarNavigationButton>(form).Count(), $"{scale:P0} 缩放下应保留包含速度监测的四个业务入口");
             form.ShowDashboardTab();
             Application.DoEvents();
             Equal(DashboardSection.Dashboard, form.SelectedSection, $"{scale:P0} 缩放下总览可达");
@@ -828,7 +833,7 @@ internal static class Program
         form.ShowDiagnosticsTab();
         Equal(DashboardSection.Diagnostics, form.SelectedSection, "托盘诊断入口应直达诊断标签页");
         Equal(1, FindControls<ApplicationSidebar>(form).Count(), "主窗口应有唯一科技侧栏");
-        Equal(3, FindControls<SidebarNavigationButton>(form).Count(), "科技侧栏应提供三个一级业务入口");
+        Equal(4, FindControls<SidebarNavigationButton>(form).Count(), "科技侧栏应提供包含速度监测的四个一级业务入口");
         form.Hide();
     }
 
@@ -1238,6 +1243,174 @@ internal static class Program
         Equal(1, facts.Responses.Count, "取消后最新扫描应正常完成");
         Equal((0, 1), progress.Values[0], "开始时报告文件总数");
         Equal((1, 1), progress.Values[^1], "结束时报告全部完成");
+    }
+
+    /// <summary>验证按总 token/总耗时聚合、推理输出扣除、模型分组及任意分钟桶跨小时边界。</summary>
+    private static void TestSpeedWeightedBuckets()
+    {
+        var time = new DateTimeOffset(2026, 9, 8, 10, 59, 0, TimeSpan.Zero);
+        SpeedSample[] samples = [
+            new("a", time.AddSeconds(-100), time, "gpt-6-astra", "fast", 1000, 400),
+            new("b", time, time.AddSeconds(1), "gpt-6-astra", "fast", 100, 20),
+            new("c", time, time.AddMilliseconds(1), "gpt-6-astra", "fast", 500, 0),
+            new("d", time, time.AddSeconds(2), "gpt-5.6-sol", "standard", 20, 0)
+        ];
+        var options = new SpeedOptions { Mode = SpeedAggregationMode.ResponseCount, ResponsesPerBucket = 2 };
+        var buckets = SpeedMonitoring.Aggregate(samples, options, time.AddMinutes(10));
+        Equal(2, buckets.Count, "模型与层级必须分组，短于一秒的极端值不得计入");
+        var astra = buckets.Single(bucket => bucket.Model == "gpt-6-astra");
+        Near(1100m / 101m, (decimal)astra.TotalTps, 0.000001m, "总 TPS 必须按响应耗时加权，而非平均每次 TPS");
+        Near(680m / 101m, (decimal)astra.VisibleTps, 0.000001m, "可见输出必须扣除 reasoning token");
+        Equal(true, astra.Complete, "满足 N 次响应后完成一组");
+        Equal(false, buckets.Single(bucket => bucket.Model == "gpt-5.6-sol").Complete, "未满 N 次标记进行中");
+        options.Mode = SpeedAggregationMode.TimeWindow; options.BucketMinutes = 90;
+        var period = SpeedMonitoring.Aggregate(samples, options, time.AddMinutes(10)).First();
+        Equal(90d, (period.End - period.Start).TotalMinutes, "超过六十分钟的时间桶也应保持准确长度");
+        Equal(false, period.Complete, "自然时间桶尚未结束不能标记已完成");
+    }
+
+    /// <summary>复现工具长时间运行、心跳、重复读取和跨重启半行；独立速度状态不得推进或修改旧输入。</summary>
+    private static void TestSpeedToolWaitAndPersistence()
+    {
+        var root = CreateTemporaryDirectory();
+        var path = Path.Combine(root, "rollout-speed.jsonl");
+        var time = new DateTimeOffset(2026, 9, 8, 10, 0, 0, TimeSpan.Zero);
+        File.WriteAllLines(path, [
+            EventMessageLine(time, "task_started"), TurnContextLine(time, "gpt-6-astra", "priority"),
+            JsonSerializer.Serialize(new { timestamp = time.AddSeconds(5), type = "response_item",
+                payload = new { type = "function_call", call_id = "tool-1" } }),
+            TokenCountLine(time.AddSeconds(6), 1000, 500, 0, 500, 100),
+            TokenHeartbeatLine(time.AddSeconds(7)),
+            JsonSerializer.Serialize(new { timestamp = time.AddSeconds(100), type = "response_item",
+                payload = new { type = "function_call_output", call_id = "tool-1" } }),
+            ResponseItemLine(time.AddSeconds(110)),
+            TokenCountLine(time.AddSeconds(111), 1000, 500, 0, 400, 0)
+        ]);
+        File.SetLastWriteTimeUtc(path, time.AddDays(-1).UtcDateTime);
+        var original = new SpeedState();
+        var state = SpeedMonitoring.Scan(original, [root], time.AddHours(1), 24);
+        Equal(0, original.Cursors.Count, "速度扫描失败前或成功后都不得原地修改输入游标");
+        Equal(2, state.Samples.Count, "心跳不得重复采样，旧 mtime 不得漏掉响应");
+        Equal(5d, state.Samples[0].DurationSeconds, "首个响应耗时五秒");
+        Equal(10d, state.Samples[1].DurationSeconds, "第二次响应必须排除九十五秒工具等待");
+        Equal("fast", state.Samples[1].ServiceTier, "保留日志明确的 Fast 层级");
+        state = JsonSerializer.Deserialize<SpeedState>(JsonSerializer.Serialize(state))!;
+        Equal(2, SpeedMonitoring.Scan(state, [root], time.AddHours(1), 24).Samples.Count, "重启后不重复既有样本");
+        File.AppendAllText(path, ResponseItemLine(time.AddSeconds(120)) + "\n" +
+            TokenCountLine(time.AddSeconds(121), 1000, 500, 0, 90, 0));
+        state = SpeedMonitoring.Scan(state, [root], time.AddHours(1), 24);
+        Equal(2, state.Samples.Count, "半行 token 不得提前计入");
+        File.AppendAllText(path, "\n");
+        state = SpeedMonitoring.Scan(state, [root], time.AddHours(1), 24);
+        Equal(3, state.Samples.Count, "补齐换行后恢复速度采样");
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        var cancelled = false;
+        try { SpeedMonitoring.Scan(state, [root], time.AddHours(1), 24, cancellation.Token); }
+        catch (OperationCanceledException) { cancelled = true; }
+        Equal(true, cancelled, "取消应显式报告，不返回伪成功空记录");
+    }
+
+    /// <summary>验证速度参数序列化后保留，速度页可在高缩放下访问，且明确显示无 TTFT 证据。</summary>
+    private static void TestSpeedPanelAndSettings()
+    {
+        var settings = new AppSettings { Speed = new SpeedOptions { Mode = SpeedAggregationMode.ResponseCount, ResponsesPerBucket = 7 } };
+        var loaded = JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(settings))!;
+        Equal(7, loaded.Speed.ResponsesPerBucket, "速度设置跨重启保留");
+        Equal(0, loaded.Validate().Count, "有效速度设置可保存");
+        using var form = new ChartForm(settings, _ => { });
+        var time = DateTimeOffset.Now;
+        SpeedBucket[] buckets = [
+            new(time.AddMinutes(-5), time, "gpt-6-astra", "fast", 7, 700, 400, 10, true),
+            new(time.AddMinutes(-10), time.AddMinutes(-5), "gpt-6-astra", "fast", 7, 600, 300, 10, true),
+            new(time.AddMinutes(-5), time, "gpt-6-astra", "standard", 7, 300, 200, 10, true),
+            new(time.AddMinutes(-5), time, "gpt-5.6-sol", "standard", 7, 200, 100, 10, true)
+        ];
+        var view = CreateDashboardPreviewView() with { SpeedSamples = buckets.SelectMany(bucket => Enumerable.Range(0, 7)
+            .Select(i => new SpeedSample($"source-{bucket.Model}-{bucket.ServiceTier}", bucket.End.AddSeconds(-14 + i),
+                bucket.End.AddSeconds(-7 + i), bucket.Model, bucket.ServiceTier, 100, 30))).ToArray(), SpeedSampleCount = 28 };
+        form.UpdateView(view, settings.Regression); form.ShowSpeedTab();
+        form.Scale(new SizeF(1.5F, 1.5F)); Application.DoEvents();
+        Equal(DashboardSection.Speed, form.SelectedSection, "速度页入口可达");
+        var panel = FindControls<SpeedPanel>(form).Single();
+        Equal(4, FindControls<DataGridView>(panel).Single().Rows.Count, "速度页显示每组聚合结果");
+        var chart = FindControls<SpeedChartControl>(panel).Single();
+        Equal(3, chart.DisplayedSeriesCount, "不同模型和层级应独立绘制三条线");
+        FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedModelFilter").SelectedItem = "gpt-6-astra";
+        Equal(2, chart.DisplayedSeriesCount, "筛选 Astra 后只保留它的两种速度层级");
+        Equal(3, FindControls<DataGridView>(panel).Single().Rows.Count, "明细必须与图表使用相同模型筛选");
+        FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedMetric").SelectedIndex = 1;
+        Equal(2, chart.DisplayedSeriesCount, "切换可见输出 TPS 不改变模型分组");
+        Equal(true, FindControls<Label>(panel).Any(label => label.Text.Contains("TTFT：不可用")), "不得把代理耗时伪装成 TTFT");
+        form.Hide();
+    }
+
+    /// <summary>验证额度双边窗口实际改变回归贡献，速度先过滤再聚合，逆序输入不破坏已应用结果。</summary>
+    private static void TestCustomTimeWindows()
+    {
+        var now = DateTimeOffset.Now;
+        var options = new RegressionOptions { Mode = RegressionMode.Linear, LinearLookbackPoints = 100 };
+        var points = Enumerable.Range(0, 6).Select(i => CurrentSample(now.AddDays(-10 + i), 1000 + i * 100)).ToArray();
+        var view = CreateDashboardPreviewView() with { Samples = points };
+        using var form = new ChartForm(new AppSettings { Regression = options }, _ => { });
+        form.UpdateView(view, options);
+        FindControls<ComboBox>(form).Single(box => box.Name == "HistoryRangeComboBox").SelectedIndex = 4;
+        var quotaWindow = FindControls<CustomTimeWindowControl>(form).Single();
+        FindControls<DateTimePicker>(quotaWindow).Single(p => p.Name == "WindowStart").Value = now.AddDays(-9).AddSeconds(-1).LocalDateTime;
+        FindControls<DateTimePicker>(quotaWindow).Single(p => p.Name == "WindowEnd").Value = now.AddDays(-7).AddSeconds(1).LocalDateTime;
+        Equal(true, quotaWindow.ApplyWindow(), "有效窗口可应用");
+        Equal(3, FindControls<QuotaChartControl>(form).Single().CurrentContributions.Count, "额度回归必须同时限制起止时间");
+        var previousStart = quotaWindow.Start;
+        FindControls<DateTimePicker>(quotaWindow).Single(p => p.Name == "WindowStart").Value = now.LocalDateTime;
+        Equal(false, quotaWindow.ApplyWindow(), "逆序窗口拒绝提交");
+        Equal(previousStart, quotaWindow.Start, "失败保留已应用窗口");
+        FindControls<DateTimePicker>(quotaWindow).Single(p => p.Name == "WindowStart").Value = previousStart.LocalDateTime;
+        quotaWindow.ApplyWindow();
+        form.Show(); form.Scale(new SizeF(1.5F, 1.5F));
+        form.MinimumSize = new Size(900, 600); form.ClientSize = new Size(1260, 860); Application.DoEvents();
+        Equal(true, FindControls<QuotaChartControl>(form).Single().Height >= 160, "150%受限视口下自定义日期区不得挤掉额度图表");
+        form.Hide();
+
+        SpeedSample[] responses = Enumerable.Range(0, 5).Select(i => new SpeedSample($"s{i}", now.AddDays(-8).AddMinutes(i).AddSeconds(-10),
+            now.AddDays(-8).AddMinutes(i), "gpt-6-astra", "fast", (i + 1) * 100, 50)).ToArray();
+        var start = responses[1].EndedAt;
+        var end = responses[3].EndedAt;
+        var grouped = SpeedMonitoring.Aggregate(responses, new SpeedOptions { HistoryHours = 24, Mode = SpeedAggregationMode.ResponseCount, ResponsesPerBucket = 2 }, now, start, end);
+        Equal(3, grouped.Sum(bucket => bucket.Count), "自定义窗口可越过默认24h，且两个端点均包含");
+        Equal(900L, grouped.Sum(bucket => bucket.OutputTokens), "先筛选响应再分桶，不可沿用整桶token");
+        Equal(2, grouped.Count, "N响应分组须从窗口内第一条重新开始");
+        Equal(false, grouped.Single(bucket => bucket.Count == 1).Complete, "尾部不足N标记部分");
+        using var panel = new SpeedPanel();
+        panel.UpdateView(view with { SpeedSamples = responses, SpeedSampleCount = 5 }, new SpeedOptions());
+        DateTimeOffset? requested = null;
+        panel.HistoryRequested += value => requested = value;
+        FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedRange").SelectedIndex = 4;
+        var speedWindow = FindControls<CustomTimeWindowControl>(panel).Single();
+        FindControls<DateTimePicker>(speedWindow).Single(p => p.Name == "WindowStart").Value = start.AddSeconds(-1).LocalDateTime;
+        FindControls<DateTimePicker>(speedWindow).Single(p => p.Name == "WindowEnd").Value = end.AddSeconds(1).LocalDateTime;
+        speedWindow.ApplyWindow();
+        Equal(speedWindow.Start, requested!.Value, "更早时间必须通知协调器补读");
+        Equal(true, FindControls<MetricCard>(panel).Single(card => card.Tone == MetricCardTone.Purple).AccessibleName!.Contains(": 3."), "窗口指标卡显示3次响应");
+        Equal(3, FindControls<DataGridView>(panel).Single().Rows.Cast<DataGridViewRow>().Sum(row => Convert.ToInt32(row.Cells[4].Value)), "明细与指标卡一致");
+    }
+
+    /// <summary>扩大历史窗口后必须重读旧日志，恢复先前被默认保留时间过滤的响应且不重复近期摘要。</summary>
+    private static void TestSpeedWindowBackfill()
+    {
+        var directory = CreateTemporaryDirectory();
+        try
+        {
+            var now = DateTimeOffset.Now;
+            var old = now.AddDays(-8);
+            var path = Path.Combine(directory, "rollout-speed-backfill.jsonl");
+            File.WriteAllLines(path, [TurnContextLine(old, "gpt-6-astra", "priority"), ResponseItemLine(old.AddSeconds(10)),
+                TokenCountLine(old.AddSeconds(11), 1000, 0, 0, 100, 0)]);
+            var recent = SpeedMonitoring.Scan(new SpeedState(), [directory], now, 24);
+            Equal(0, recent.Samples.Count, "默认24h不含八天前响应");
+            var expanded = SpeedMonitoring.Scan(recent, [directory], now, 240);
+            Equal(1, expanded.Samples.Count, "扩窗后从日志恢复旧响应");
+            Equal(1, SpeedMonitoring.Scan(expanded, [directory], now, 240).Samples.Count, "扩窗后增量读取不重复");
+        }
+        finally { Directory.Delete(directory, true); }
     }
 
     /// <summary>复现跨重置旧文件持续追加但修改时间不前进；同一读取器须发现新增完整记录，截短后不得复用旧索引。</summary>

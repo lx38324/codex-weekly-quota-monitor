@@ -32,6 +32,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         AppTheme.Set(_coordinator.Settings.Theme);
         _detailForm = new DetailForm();
         _chartForm = new ChartForm(_coordinator.Settings, ApplySettings);
+        _chartForm.SpeedHistoryRequested += _coordinator.RequestSpeedHistory;
         _menu = BuildMenu();
         _currentIcon = IconFactory.Create(null);
         _notifyIcon = new NotifyIcon

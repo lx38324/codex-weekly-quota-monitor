@@ -316,6 +316,10 @@ public sealed record MonitorViewSnapshot(
     IReadOnlyList<CurvePoint> RegressionCurve)
 {
     public bool ShowingPreviousPrices { get; init; }
+    public IReadOnlyList<SpeedSample> SpeedSamples { get; init; } = [];
+    public int SpeedHistoryHours { get; init; }
+    public int SpeedSampleCount { get; init; }
+    public string SpeedStatus { get; init; } = string.Empty;
     public int? RepricingProgressPercent { get; init; }
     public string PricingVersion { get; init; } = PublicApiPricing.PricingVersion;
     public decimal? OfficialLongContextEstimatedWeeklyQuotaUsd { get; init; }

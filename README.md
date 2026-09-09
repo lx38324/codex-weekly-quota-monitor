@@ -42,6 +42,8 @@ pwsh -ExecutionPolicy Bypass -File .\install.ps1
 
 ## 数据与隐私
 
+额度和速度页均可选“自定义起止时间”，按本地时间输入后点击应用。速度页提供窗口加权 TPS 指标卡、模型折线与明细；更早窗口自动补读现存日志。设置中可选按时间或每 N 次响应汇总。TPS 是端到端估计，TTFT 当前不可用。
+
 生图会消耗 Codex 额度，但目前本地日志未提供独立图像用量，本程序尚未计入其成本；有生图的区间可能低估额度，详见诊断页。
 
 数据目录：`%LOCALAPPDATA%\CodexWeeklyQuotaMonitor`
