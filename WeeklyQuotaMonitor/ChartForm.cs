@@ -22,6 +22,11 @@ public sealed class ChartForm : Form
     private readonly ApplicationSidebar _sidebar = new();
     private readonly Panel _contentHost = new() { Dock = DockStyle.Fill };
     private readonly Panel _dashboardPage = new() { Dock = DockStyle.Fill };
+    private readonly TableLayoutPanel _dashboardContent = new()
+    {
+        Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(20, 16, 20, 18)
+    };
+    private bool _fittingDashboard;
     private readonly Panel _settingsPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
     private readonly Panel _diagnosticsPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
     private readonly Panel _speedPage = new() { Dock = DockStyle.Fill };
@@ -49,10 +54,12 @@ public sealed class ChartForm : Form
     private readonly Label _summary = new() { Name = "HistorySummaryLabel" };
     private readonly Label _timeRangeLabel = new();
     private readonly ComboBox _timeRange = new() { Name = "HistoryRangeComboBox" };
+    private ChartTimeWindow? _interactiveWindow;
+    private readonly Label _navigationInfo = new() { Name = "QuotaNavigationInfo", AutoSize = true, Dock = DockStyle.Fill, Padding = new Padding(12, 2, 12, 4) };
     private readonly CustomTimeWindowControl _customWindow = new() { Visible = false, Name = "QuotaCustomWindow" };
     public event Action<DateTimeOffset>? SpeedHistoryRequested;
     private readonly Panel _trendFrame = new() { Dock = DockStyle.Fill, Padding = new Padding(1) };
-    private readonly TableLayoutPanel _trendContent = new() { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5 };
+    private readonly TableLayoutPanel _trendContent = new() { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6 };
     private readonly QuotaChartControl _chart = new();
     private readonly DataGridView _grid = new();
     private readonly CheckBox _showBaseSamples = SeriesCheckBox(Color.FromArgb(14, 165, 233));
@@ -88,6 +95,8 @@ public sealed class ChartForm : Form
         ConfigureTimeRange();
 
         _dashboardPage.Controls.Add(BuildDashboardPage());
+        _dashboardPage.Layout += (_, _) => FitDashboardWindow();
+        _trendContent.Layout += (_, _) => FitDashboardWindow();
         _settingsPage.Controls.Add(_settingsPanel);
         _diagnosticsPage.Controls.Add(_diagnosticsPanel);
         _contentHost.Controls.AddRange([_dashboardPage, _settingsPage, _diagnosticsPage, _speedPage]);
@@ -156,13 +165,7 @@ public sealed class ChartForm : Form
             _resetCard,
             _sampleCard);
 
-        var content = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 3,
-            Padding = new Padding(20, 16, 20, 18)
-        };
+        var content = _dashboardContent;
         content.ColumnStyles.Add(new(SizeType.Percent, 100));
         content.RowStyles.Add(new(SizeType.AutoSize));
         content.RowStyles.Add(new(SizeType.AutoSize));
@@ -172,6 +175,27 @@ public sealed class ChartForm : Form
         content.Controls.Add(BuildTrendWorkspace(), 0, 2);
 
         return content;
+    }
+
+    /// <summary>自定义日期和窄屏换行增加高度时保留图表与明细空间，通过页面滚动容纳内容，不压缩成不可读的细条。</summary>
+    private void FitDashboardWindow()
+    {
+        if (_fittingDashboard || _dashboardContent.RowStyles.Count == 0) return;
+        _fittingDashboard = true;
+        try
+        {
+            var custom = SelectedHistoryRange() == HistoryRange.Custom;
+            _dashboardPage.AutoScroll = custom;
+            _dashboardContent.Dock = custom ? DockStyle.Top : DockStyle.Fill;
+            if (!custom) { _dashboardPage.AutoScrollMinSize = Size.Empty; return; }
+            var dataHeight = Math.Max(320, _grid.ColumnHeadersHeight + _grid.RowTemplate.Height * 3 + 180);
+            var required = _dashboardContent.GetRowHeights().Take(2).Sum() +
+                _trendContent.GetRowHeights().Take(5).Sum() + dataHeight +
+                _dashboardContent.Padding.Vertical + _trendFrame.Padding.Vertical + _trendFrame.Margin.Vertical + 24;
+            _dashboardContent.Height = Math.Max(_dashboardPage.ClientSize.Height, required);
+            _dashboardPage.AutoScrollMinSize = new Size(0, _dashboardContent.Height);
+        }
+        finally { _fittingDashboard = false; }
     }
 
     /// <summary>
@@ -229,12 +253,14 @@ public sealed class ChartForm : Form
         _trendContent.RowStyles.Add(new(SizeType.AutoSize));
         _trendContent.RowStyles.Add(new(SizeType.AutoSize));
         _trendContent.RowStyles.Add(new(SizeType.AutoSize));
+        _trendContent.RowStyles.Add(new(SizeType.AutoSize));
         _trendContent.RowStyles.Add(new(SizeType.Percent, 100));
         _trendContent.Controls.Add(_regressionEstimate, 0, 0);
         _trendContent.Controls.Add(_summary, 0, 1);
         _trendContent.Controls.Add(options, 0, 2);
-        _trendContent.Controls.Add(_customWindow, 0, 3);
-        _trendContent.Controls.Add(dataStack, 0, 4);
+        _trendContent.Controls.Add(_navigationInfo, 0, 3);
+        _trendContent.Controls.Add(_customWindow, 0, 4);
+        _trendContent.Controls.Add(dataStack, 0, 5);
         _trendFrame.Margin = new Padding(4, 0, 4, 0);
         _trendFrame.Controls.Add(_trendContent);
         return _trendFrame;
@@ -266,10 +292,13 @@ public sealed class ChartForm : Form
     {
         _timeRange.SelectedIndexChanged += (_, _) =>
         {
+            _interactiveWindow = null;
             _customWindow.Visible = SelectedHistoryRange() == HistoryRange.Custom;
             RefreshHistoryPage();
         };
-        _customWindow.WindowApplied += RefreshHistoryPage;
+        _customWindow.WindowApplied += () => { _interactiveWindow = null; RefreshHistoryPage(); };
+        _chart.Navigation.WindowChanged += window => { _interactiveWindow = window; RefreshHistoryPage(); };
+        _chart.Navigation.ResetRequested += () => { _interactiveWindow = null; RefreshHistoryPage(); };
         BindTimeRanges(HistoryRange.Days30);
     }
 
@@ -350,7 +379,7 @@ public sealed class ChartForm : Form
         _dashboardEyebrow.Text = UiText.Get("DashboardEyebrow");
         _dashboardTitle.Text = UiText.Get("DashboardTitle");
         _dashboardSubtitle.Text = UiText.Get("DashboardSubtitle");
-        _timeRangeLabel.Text = UiText.Get("TimeRangeLabel");
+        _timeRangeLabel.Text = UiText.Get("ChartInitialRange");
         _showBaseSamples.Text = UiText.Get("SeriesBaseSamples");
         _showBaseRegression.Text = UiText.Get("SeriesBaseRegression");
         _showOfficialSamples.Text = UiText.Get("SeriesOfficialSamples");
@@ -527,7 +556,7 @@ public sealed class ChartForm : Form
             return;
         }
 
-        var cutoff = selected.Range switch
+        var cutoff = _interactiveWindow?.Start ?? (selected.Range switch
         {
             HistoryRange.All => DateTimeOffset.MinValue,
             HistoryRange.Hours24 => DateTimeOffset.Now.AddHours(-24),
@@ -535,9 +564,13 @@ public sealed class ChartForm : Form
             HistoryRange.Days30 => DateTimeOffset.Now.AddDays(-30),
             HistoryRange.Custom => _customWindow.Start,
             _ => throw new InvalidOperationException($"不支持的历史时间范围：{selected.Range}。")
-        };
-        var end = selected.Range == HistoryRange.Custom ? _customWindow.End : DateTimeOffset.Now;
+        });
+        var end = _interactiveWindow?.End ?? (selected.Range == HistoryRange.Custom ? _customWindow.End : DateTimeOffset.Now);
         var samples = _view.Samples.Where(sample => sample.Timestamp >= cutoff && sample.Timestamp <= end).ToArray();
+        var visibleStart = cutoff == DateTimeOffset.MinValue ? (samples.Length > 0 ? samples.Min(sample => sample.Timestamp) : end.AddDays(-1)) : cutoff;
+        _chart.Navigation.SetWindow(visibleStart, end);
+        _navigationInfo.Text = UiText.Format("ChartInteractionHint", visibleStart.LocalDateTime, end.LocalDateTime);
+        _navigationInfo.ForeColor = AppTheme.Current.MutedText;
         var baseAnalysis = RegressionCalculator.Analyze(
             samples,
             _settings.Regression,
@@ -687,6 +720,7 @@ public sealed class ChartForm : Form
     /// <param name="selected">需要继续选中的时间范围。</param>
     private void BindTimeRanges(HistoryRange selected)
     {
+        var interactive = _interactiveWindow;
         _customWindow.ApplyLanguage();
         _timeRange.DataSource = new[]
         {
@@ -698,6 +732,7 @@ public sealed class ChartForm : Form
         };
         _timeRange.SelectedItem = ((RangeChoice[])_timeRange.DataSource)
             .Single(choice => choice.Range == selected);
+        _interactiveWindow = interactive;
     }
 
     /// <summary>

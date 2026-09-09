@@ -32,6 +32,7 @@ public sealed class QuotaChartControl : Control
     public ChartSeriesVisibility SeriesVisibility => _seriesVisibility;
 
     public IReadOnlyList<RegressionContribution> CurrentContributions => _currentContributions;
+    public ChartTimeNavigation Navigation { get; }
 
     /// <summary>
     /// 启用双缓冲并设置适合金额时间序列的默认外观。
@@ -42,6 +43,7 @@ public sealed class QuotaChartControl : Control
         BackColor = AppTheme.Current.Surface;
         Font = SystemFonts.MessageBoxFont!;
         ResizeRedraw = true;
+        Navigation = new ChartTimeNavigation(this);
         MouseMove += ChartMouseMove;
         MouseLeave += ChartMouseLeave;
     }
@@ -75,6 +77,7 @@ public sealed class QuotaChartControl : Control
         _baseCurve = baseCurve;
         _officialLongContextCurve = officialLongContextCurve;
         _currentContributions = currentContributions;
+        _hitTargets = []; _hoverTarget = null;
         Invalidate();
     }
 
@@ -108,12 +111,15 @@ public sealed class QuotaChartControl : Control
             30 * scale,
             Math.Max(10 * scale, Width - 104 * scale),
             Math.Max(10 * scale, Height - 94 * scale));
+        Navigation.SetPlot(plot);
         using var axisPen = new Pen(AppTheme.Current.Border, 1F * scale);
         e.Graphics.DrawLine(axisPen, plot.Left, plot.Bottom, plot.Right, plot.Bottom);
         e.Graphics.DrawLine(axisPen, plot.Left, plot.Top, plot.Left, plot.Bottom);
 
         if (_samples.Count == 0)
         {
+            if (Navigation.Window is { } emptyWindow)
+                DrawGridAndLabels(e.Graphics, plot, emptyWindow.Start, emptyWindow.End, 0, 1, scale);
             using var emptyBrush = new SolidBrush(AppTheme.Current.MutedText);
             e.Graphics.DrawString(
                 UiText.Get("ChartEmpty"),
@@ -158,8 +164,8 @@ public sealed class QuotaChartControl : Control
         minY = Math.Max(0, minY - padding);
         maxY += padding;
 
-        var minX = visiblePoints.Min(point => point.Timestamp);
-        var maxX = visiblePoints.Max(point => point.Timestamp);
+        var minX = Navigation.Window?.Start ?? visiblePoints.Min(point => point.Timestamp);
+        var maxX = Navigation.Window?.End ?? visiblePoints.Max(point => point.Timestamp);
         if (minX == maxX)
         {
             minX = minX.AddMinutes(-30);
@@ -244,6 +250,13 @@ public sealed class QuotaChartControl : Control
         DrawHover(e.Graphics, plot, scale);
     }
 
+    /// <summary>释放时间导航事件和样本悬停提示。</summary>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { Navigation.Dispose(); _toolTip.Dispose(); }
+        base.Dispose(disposing);
+    }
+
     /// <summary>
     /// 绘制五等分金额网格和时间网格，并显示横纵轴标签。
     /// </summary>
@@ -271,7 +284,7 @@ public sealed class QuotaChartControl : Control
             var x = plot.Left + plot.Width * ratio;
             graphics.DrawLine(gridPen, x, plot.Top, x, plot.Bottom);
             var timestamp = minX + TimeSpan.FromTicks((long)((maxX - minX).Ticks * ratio));
-            var timeLabel = timestamp.LocalDateTime.ToString("MM-dd HH:mm", UiText.Culture);
+            var timeLabel = timestamp.LocalDateTime.ToString((maxX - minX).TotalMinutes < 5 ? "HH:mm:ss" : "MM-dd HH:mm", UiText.Culture);
             var timeSize = graphics.MeasureString(timeLabel, Font);
             var timeX = Math.Clamp(
                 x - timeSize.Width / 2,
@@ -567,6 +580,7 @@ public sealed class QuotaChartControl : Control
     /// </summary>
     private void ChartMouseMove(object? sender, MouseEventArgs e)
     {
+        if (Navigation.IsDragging) { _toolTip.Hide(this); return; }
         var radius = 12F * DeviceDpi / 96F;
         var nearest = _hitTargets
             .Select(target => new

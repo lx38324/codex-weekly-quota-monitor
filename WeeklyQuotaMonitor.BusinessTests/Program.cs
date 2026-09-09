@@ -66,6 +66,7 @@ internal static class Program
             TestSpeedToolWaitAndPersistence,
             TestSpeedPanelAndSettings,
             TestCustomTimeWindows,
+            TestInteractiveChartWindows,
             TestSpeedWindowBackfill,
             TestHistoricalScanStaleFileTimeAcrossReset,
             TestReplayRejectsReducedCoverage,
@@ -1370,6 +1371,8 @@ internal static class Program
         var customChart = FindControls<QuotaChartControl>(form).Single();
         Console.WriteLine($"自定义窗口布局：client={form.ClientSize}; chart={customChart.Size}; editor={quotaWindow.Size}; font={form.Font}; dpi={form.DeviceDpi}; rows={string.Join(',', ((TableLayoutPanel)quotaWindow.Parent!).GetRowHeights())}; screen={Screen.FromControl(form).WorkingArea}");
         Equal(true, customChart.Height >= 160, "150%受限视口下自定义日期区不得挤掉额度图表");
+        form.ClientSize = new Size(1024, 720); Application.DoEvents();
+        Equal(true, customChart.Height >= 160, "1024×720窄屏换行后仍须保留绘图高度，允许纵向滚动");
         form.Hide();
 
         SpeedSample[] responses = Enumerable.Range(0, 5).Select(i => new SpeedSample($"s{i}", now.AddDays(-8).AddMinutes(i).AddSeconds(-10),
@@ -1394,6 +1397,76 @@ internal static class Program
         Equal(true, FindControls<MetricCard>(panel).Single(card => card.Tone == MetricCardTone.Purple).AccessibleName!.Contains(": 3."), "窗口指标卡显示3次响应");
         Equal(3, FindControls<DataGridView>(panel).Single().Rows.Cast<DataGridViewRow>().Sum(row => Convert.ToInt32(row.Cells[4].Value)), "明细与指标卡一致");
     }
+
+    /// <summary>通过实际鼠标事件验证缩放锚点、平移、空窗口复位及两页统计同步，而不是只检查数学接口。</summary>
+    private static void TestInteractiveChartWindows()
+    {
+        var now = DateTimeOffset.Now;
+        var points = Enumerable.Range(0, 10).Select(i => CurrentSample(now.AddHours(-10 + i), 1000 + i * 100)).ToArray();
+        var speed = points.Select((point, i) => new SpeedSample($"speed-{i}", point.Timestamp.AddSeconds(-10), point.Timestamp,
+            i % 2 == 0 ? "gpt-6-astra" : "gpt-5.6-sol", "standard", 100, 20)).ToArray();
+        var settings = new AppSettings { Regression = new RegressionOptions { Mode = RegressionMode.Linear, LinearLookbackPoints = 100 },
+            Speed = new SpeedOptions { Mode = SpeedAggregationMode.ResponseCount, ResponsesPerBucket = 1 } };
+        using var form = new ChartForm(settings, _ => { });
+        form.UpdateView(CreateDashboardPreviewView() with { Samples = points, SpeedSamples = speed, SpeedHistoryHours = 24 }, settings.Regression);
+        FindControls<ComboBox>(form).Single(box => box.Name == "HistoryRangeComboBox").SelectedIndex = 0;
+        form.Show(); Application.DoEvents();
+        var chart = FindControls<QuotaChartControl>(form).Single();
+        RenderInteractiveChart(chart);
+        var initial = chart.Navigation.Window!.Value;
+        var x = 76 + (chart.Width - 104) / 2;
+        SendChartMouse(chart, "OnMouseWheel", new HandledMouseEventArgs(MouseButtons.None, 0, x, 60, 480));
+        var zoomed = chart.Navigation.Window!.Value;
+        Equal(true, zoomed.End - zoomed.Start < initial.End - initial.Start, "滚轮放大必须缩短实际窗口");
+        var expected = points.Count(point => point.Timestamp >= zoomed.Start && point.Timestamp <= zoomed.End);
+        Equal(true, expected > 0 && expected < points.Length, "缩放场景应筛掉部分样本");
+        Equal(expected, chart.CurrentContributions.Count, "缩放后额度回归贡献必须重算");
+        Equal(expected, FindControls<DataGridView>(form).Single().Rows.Count, "额度表格与可见窗口一致");
+        var expectedZoom = ChartTimeNavigation.Zoom(initial, (x - 76d) / (chart.Width - 104), Math.Pow(1.2, -4));
+        Equal(true, Math.Abs((expectedZoom.Start - zoomed.Start).TotalMilliseconds) <= 1, "鼠标锚点须用于时间缩放");
+        RenderInteractiveChart(chart);
+        SendChartMouse(chart, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, x, 60, 0));
+        SendChartMouse(chart, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, x + 100, 60, 0));
+        var panned = chart.Navigation.Window!.Value;
+        Equal(zoomed.End - zoomed.Start, panned.End - panned.Start, "平移保持时间跨度不变");
+        Equal(true, panned.Start < zoomed.Start, "向右拖动应查看更早时间");
+        Equal(points.Count(point => point.Timestamp >= panned.Start && point.Timestamp <= panned.End), chart.CurrentContributions.Count, "平移后回归与窗口一致");
+        SendChartMouse(chart, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, x, 60, 0));
+        SendChartMouse(chart, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, x + chart.Width * 20, 60, 0));
+        Equal(0, chart.CurrentContributions.Count, "平移到无数据区不得保留旧估值");
+        RenderInteractiveChart(chart);
+        SendChartMouse(chart, "OnMouseDoubleClick", new MouseEventArgs(MouseButtons.Left, 2, x, 60, 0));
+        Equal(10, chart.CurrentContributions.Count, "空窗口仍可双击恢复初始全部范围");
+
+        form.ShowSpeedTab();
+        var panel = FindControls<SpeedPanel>(form).Single();
+        FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedRange").SelectedIndex = 0;
+        var speedChart = FindControls<SpeedChartControl>(panel).Single();
+        Application.DoEvents(); RenderInteractiveChart(speedChart);
+        var speedX = 64 + (speedChart.Width - 84) / 2;
+        SendChartMouse(speedChart, "OnMouseWheel", new HandledMouseEventArgs(MouseButtons.None, 0, speedX, 80, 480));
+        var speedWindow = speedChart.Navigation.Window!.Value;
+        var visibleResponses = speed.Where(sample => sample.EndedAt >= speedWindow.Start && sample.EndedAt <= speedWindow.End).ToArray();
+        Equal(true, visibleResponses.Length > 0 && visibleResponses.Length < 10, "速度图实际缩放而不是仅放大外观");
+        Equal(visibleResponses.Length, FindControls<DataGridView>(panel).Single().Rows.Count, "速度按新窗口重新分组");
+        FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedModelFilter").SelectedItem = "gpt-6-astra";
+        Equal(speedWindow, speedChart.Navigation.Window!.Value, "模型切换不得重置用户缩放");
+        Equal(visibleResponses.Count(sample => sample.Model == "gpt-6-astra"), FindControls<DataGridView>(panel).Single().Rows.Count, "模型筛选和时间缩放同时生效");
+        Equal(TimeSpan.FromSeconds(1), ChartTimeNavigation.Zoom(initial, .5, 1e-20).End - ChartTimeNavigation.Zoom(initial, .5, 1e-20).Start, "极限放大仍保留一秒有效窗口");
+        form.Hide();
+    }
+
+    /// <summary>完成一次真实绘制以建立鼠标命中的时间坐标；不依赖测试主机屏幕截图。</summary>
+    private static void RenderInteractiveChart(Control chart)
+    {
+        using var bitmap = new Bitmap(chart.Width, chart.Height);
+        chart.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+    }
+
+    /// <summary>向控件派发与 Windows 同形的鼠标事件，覆盖导航订阅和业务页面重算链路。</summary>
+    private static void SendChartMouse(Control chart, string method, MouseEventArgs args) =>
+        typeof(Control).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(chart, [args]);
 
     /// <summary>扩大历史窗口后必须重读旧日志，恢复先前被默认保留时间过滤的响应且不重复近期摘要。</summary>
     private static void TestSpeedWindowBackfill()

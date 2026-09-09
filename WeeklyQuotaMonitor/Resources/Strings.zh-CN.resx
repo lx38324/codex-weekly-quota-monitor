@@ -232,4 +232,6 @@
   <data name="SpeedCoverage" xml:space="preserve"><value>缓存响应覆盖：{0} — {1}（本地） · {2:N0} 条摘要；更早窗口自动补读现存日志。</value></data>
   <data name="SpeedShortNote" xml:space="preserve"><value>端到端 TPS 估计，非纯解码速度 · TTFT：不可用 · 悬停查看测量口径</value></data>
   <data name="SpeedWindowLoading" xml:space="preserve"><value>所选时间窗尚未完整扫描；正在等待后台补读，当前仅展示已缓存结果（速度监测需启用）。</value></data>
+  <data name="ChartInitialRange" xml:space="preserve"><value>初始范围</value></data>
+  <data name="ChartInteractionHint" xml:space="preserve"><value>滚轮缩放 · 拖拽平移 · 双击复位　当前：{0:MM-dd HH:mm:ss} — {1:MM-dd HH:mm:ss}（本地）</value></data>
 </root>

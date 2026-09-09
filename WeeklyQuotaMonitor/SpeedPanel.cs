@@ -29,6 +29,8 @@ public sealed class SpeedPanel : UserControl
     private readonly ComboBox _model = new() { Name = "SpeedModelFilter", DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly ComboBox _metric = new() { Name = "SpeedMetric", DropDownStyle = ComboBoxStyle.DropDownList, Width = 180 };
     private readonly ComboBox _range = new() { Name = "SpeedRange", DropDownStyle = ComboBoxStyle.DropDownList, Width = 150, FlatStyle = FlatStyle.Flat };
+    private readonly Label _rangeLabel = new() { AutoSize = true, Margin = new Padding(0, 7, 6, 0) };
+    private ChartTimeWindow? _interactiveWindow;
     private readonly CustomTimeWindowControl _window = new() { Name = "SpeedCustomWindow", Visible = false };
     private IReadOnlyList<SpeedSample> _samples = [];
     private SpeedOptions _options = new();
@@ -51,12 +53,17 @@ public sealed class SpeedPanel : UserControl
         layout.RowStyles.Add(new(SizeType.Percent, 36));
         layout.RowStyles.Add(new(SizeType.AutoSize));
         var filters = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8) };
-        filters.Controls.AddRange([_range, _model, _metric]);
+        filters.Controls.AddRange([_rangeLabel, _range, _model, _metric]);
         _model.FlatStyle = FlatStyle.Flat; _metric.FlatStyle = FlatStyle.Flat;
         _model.SelectedIndexChanged += (_, _) => RefreshFilteredData();
         _metric.SelectedIndexChanged += (_, _) => RefreshFilteredData();
         _range.SelectedIndexChanged += (_, _) => ChangeRange();
         _window.WindowApplied += ChangeRange;
+        _chart.Navigation.WindowChanged += window =>
+        {
+            _interactiveWindow = window; HistoryRequested?.Invoke(window.Start); RefreshFilteredData();
+        };
+        _chart.Navigation.ResetRequested += ChangeRange;
         var cards = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 8, 0, 8) };
         for (var i = 0; i < 3; i++) cards.ColumnStyles.Add(new(SizeType.Percent, i == 0 ? 40 : 30));
         cards.RowStyles.Add(new(SizeType.AutoSize));
@@ -92,6 +99,7 @@ public sealed class SpeedPanel : UserControl
     public void UpdateView(MonitorViewSnapshot view, SpeedOptions options)
     {
         _title.Text = UiText.Get("SpeedTitle");
+        _rangeLabel.Text = UiText.Get("ChartInitialRange");
         _samples = view.SpeedSamples; _options = options;
         _models = _samples.Select(sample => sample.Model).Distinct().OrderBy(model => model).ToArray();
         _binding = true;
@@ -125,6 +133,7 @@ public sealed class SpeedPanel : UserControl
     private void ChangeRange()
     {
         if (_binding) return;
+        _interactiveWindow = null;
         _window.Visible = _range.SelectedIndex == 4;
         var (start, _) = WindowBounds(DateTimeOffset.Now);
         if (_range.SelectedIndex != 0) HistoryRequested?.Invoke(start);
@@ -132,7 +141,8 @@ public sealed class SpeedPanel : UserControl
     }
 
     /// <summary>快捷范围随当前时间滚动，自定义起止固定；全部缓存不暗示所有历史日志均已采集。</summary>
-    private (DateTimeOffset Start, DateTimeOffset End) WindowBounds(DateTimeOffset now) => _range.SelectedIndex switch
+    private (DateTimeOffset Start, DateTimeOffset End) WindowBounds(DateTimeOffset now) => _interactiveWindow is { } window
+        ? (window.Start, window.End) : _range.SelectedIndex switch
     {
         0 => (DateTimeOffset.MinValue, now), 2 => (now.AddDays(-7), now), 3 => (now.AddDays(-30), now),
         4 => (_window.Start, _window.End), _ => (now.AddHours(-24), now)
@@ -144,7 +154,10 @@ public sealed class SpeedPanel : UserControl
         if (_binding) return;
         var now = DateTimeOffset.Now;
         var (start, end) = WindowBounds(now);
-        _status.Text = _dataStatus + (_range.SelectedIndex != 0 && start < _coverageStart ? "\n" + UiText.Get("SpeedWindowLoading") : string.Empty);
+        var visibleStart = start == DateTimeOffset.MinValue ? (_samples.Count > 0 ? _samples.Min(sample => sample.EndedAt) : end.AddDays(-1)) : start;
+        _chart.Navigation.SetWindow(visibleStart, end);
+        _note.Text = UiText.Format("ChartInteractionHint", visibleStart.LocalDateTime, end.LocalDateTime) + "\n" + UiText.Get("SpeedShortNote");
+        _status.Text = _dataStatus + ((_range.SelectedIndex != 0 || _interactiveWindow.HasValue) && start < _coverageStart ? "\n" + UiText.Get("SpeedWindowLoading") : string.Empty);
         var buckets = SpeedMonitoring.Aggregate(_samples, _options, now, start, end);
         var filtered = buckets.Where(bucket => _model.SelectedIndex <= 0 || bucket.Model == _model.SelectedItem as string)
             .OrderByDescending(bucket => bucket.End).ThenBy(bucket => bucket.Model).ToArray();

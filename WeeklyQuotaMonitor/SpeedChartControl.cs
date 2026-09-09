@@ -15,12 +15,14 @@ public sealed class SpeedChartControl : Control
         Color.FromArgb(16, 185, 129), Color.FromArgb(245, 158, 11), Color.FromArgb(244, 63, 94), Color.FromArgb(6, 182, 212)];
 
     public int DisplayedSeriesCount => _buckets.Select(bucket => (bucket.Model, bucket.ServiceTier)).Distinct().Count();
+    public ChartTimeNavigation Navigation { get; }
 
     /// <summary>启用双缓冲绘制并提供采样点悬停明细，避免折线值与模型分组难以核对。</summary>
     public SpeedChartControl()
     {
         Name = "SpeedChart";
         Dock = DockStyle.Fill;
+        Navigation = new ChartTimeNavigation(this);
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
             ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         MouseMove += (_, e) => ShowPointDetails(e.Location);
@@ -49,6 +51,7 @@ public sealed class SpeedChartControl : Control
         var legendRows = (int)Math.Ceiling((double)legendModels.Length / columns);
         var top = (legendRows + 1) * lineHeight + 6;
         var plot = new RectangleF(64 * scale, top, Width - 84 * scale, Height - top - 40 * scale);
+        Navigation.SetPlot(plot);
         if (plot.Width < 30 || plot.Height < 20) return;
         for (var i = 0; i < legendModels.Length; i++)
         {
@@ -60,16 +63,16 @@ public sealed class SpeedChartControl : Control
         }
         TextRenderer.DrawText(e.Graphics, UiText.Get("SpeedLineStyles"), Font,
             new Point(12, legendRows * lineHeight), theme.MutedText);
-        if (_buckets.Count == 0)
+        if (_buckets.Count == 0 && Navigation.Window is null)
         {
             TextRenderer.DrawText(e.Graphics, UiText.Get("SpeedNoSamples"), Font,
                 Rectangle.Round(plot), theme.MutedText, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             return;
         }
-        var minTime = _buckets.Min(bucket => bucket.End);
-        var maxTime = _buckets.Max(bucket => bucket.End);
+        var minTime = Navigation.Window?.Start ?? _buckets.Min(bucket => bucket.End);
+        var maxTime = Navigation.Window?.End ?? _buckets.Max(bucket => bucket.End);
         if (maxTime == minTime) { minTime = minTime.AddMinutes(-1); maxTime = maxTime.AddMinutes(1); }
-        var maximum = Math.Max(1d, _buckets.Max(Value) * 1.1);
+        var maximum = _buckets.Count == 0 ? 1 : Math.Max(1d, _buckets.Max(Value) * 1.1);
         using var gridPen = new Pen(theme.Border);
         for (var i = 0; i <= 4; i++)
         {
@@ -84,10 +87,13 @@ public sealed class SpeedChartControl : Control
             var time = minTime.AddSeconds((maxTime - minTime).TotalSeconds * i / 4);
             var labelWidth = Math.Min(Width, (int)(110 * scale));
             var labelLeft = Math.Clamp((int)x - labelWidth / 2, 0, Width - labelWidth);
-            TextRenderer.DrawText(e.Graphics, time.LocalDateTime.ToString("MM-dd HH:mm"), Font,
+            TextRenderer.DrawText(e.Graphics, time.LocalDateTime.ToString((maxTime - minTime).TotalMinutes < 5 ? "HH:mm:ss" : "MM-dd HH:mm"), Font,
                 new Rectangle(labelLeft, (int)plot.Bottom + 8, labelWidth, lineHeight),
                 theme.MutedText, TextFormatFlags.HorizontalCenter);
         }
+        if (_buckets.Count == 0)
+            TextRenderer.DrawText(e.Graphics, UiText.Get("SpeedNoSamples"), Font, Rectangle.Round(plot),
+                theme.MutedText, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         foreach (var series in _buckets.GroupBy(bucket => (bucket.Model, bucket.ServiceTier)))
         {
             using var pen = new Pen(ModelColor(series.Key.Model), 2 * scale)
@@ -114,6 +120,7 @@ public sealed class SpeedChartControl : Control
     /// <summary>展示距离鼠标最近的样本数、时间、模型和层级，不将不同系列的重叠点混成均值。</summary>
     private void ShowPointDetails(Point point)
     {
+        if (Navigation.IsDragging) { _tooltip.Hide(this); return; }
         var nearest = _hitPoints.OrderBy(item => Math.Pow(item.Point.X - point.X, 2) + Math.Pow(item.Point.Y - point.Y, 2)).FirstOrDefault();
         if (nearest.Bucket is null || Math.Abs(nearest.Point.X - point.X) > 12 || Math.Abs(nearest.Point.Y - point.Y) > 12)
         { _tooltip.Hide(this); return; }
@@ -124,7 +131,7 @@ public sealed class SpeedChartControl : Control
     /// <summary>释放图表持有的悬停提示资源。</summary>
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _tooltip.Dispose();
+        if (disposing) { Navigation.Dispose(); _tooltip.Dispose(); }
         base.Dispose(disposing);
     }
 }

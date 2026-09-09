@@ -232,4 +232,6 @@
   <data name="SpeedCoverage" xml:space="preserve"><value>Cached response coverage: {0} — {1} (local) · {2:N0} summaries. Earlier windows backfill existing logs.</value></data>
   <data name="SpeedShortNote" xml:space="preserve"><value>End-to-end TPS proxy, not decoding speed · TTFT unavailable · Hover for measurement details</value></data>
   <data name="SpeedWindowLoading" xml:space="preserve"><value>Window not fully scanned. Waiting for background backfill; only cached results shown (speed monitoring must be enabled).</value></data>
+  <data name="ChartInitialRange" xml:space="preserve"><value>Initial range</value></data>
+  <data name="ChartInteractionHint" xml:space="preserve"><value>Wheel: zoom · Drag: pan · Double-click: reset　View: {0:MM-dd HH:mm:ss} — {1:MM-dd HH:mm:ss} (local)</value></data>
 </root>
