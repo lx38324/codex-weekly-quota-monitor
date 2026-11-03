@@ -67,6 +67,8 @@ public sealed record QuotaSample(
     public string AmountDefinition { get; init; } = string.Empty;
     public decimal OfficialLongContextIntervalApiEquivalentUsd { get; init; }
     public decimal OfficialLongContextEstimatedWeeklyQuotaUsd { get; init; }
+    public bool OfficialLongContextAvailable { get; init; } = true;
+    public string OfficialLongContextIssue { get; init; } = string.Empty;
     public string OfficialLongContextAmountDefinition { get; init; } = string.Empty;
     public string PricingVersion { get; init; } = string.Empty;
     public string ServiceTiers { get; init; } = string.Empty;
@@ -77,9 +79,13 @@ public sealed record QuotaSample(
 
 /// <summary>
 /// 保存逐响应计价依据；保留每次输入长度，使修改长上下文阈值后仍能精确重算。
+/// 保存逐响应时间以支持计费规则生效边界；旧记录无此字段时为 null，不猜测免费。
 /// 不保存对话正文或本地路径。
 /// </summary>
-public sealed record ResponsePricingUsage(string Model, string ServiceTier, TokenUsage Usage);
+public sealed record ResponsePricingUsage(string Model, string ServiceTier, TokenUsage Usage)
+{
+    public DateTimeOffset? Timestamp { get; init; }
+}
 
 /// <summary>
 /// 表示图表上的时间与金额坐标。
@@ -113,6 +119,9 @@ public sealed class RegressionOptions
 /// </summary>
 public sealed class FileCursorState
 {
+    /// <summary>复制可变游标，防止后台落盘期间的增量扫描改写同一对象。</summary>
+    public FileCursorState CopyForPersistence() => (FileCursorState)MemberwiseClone();
+
     public long Offset { get; set; }
     public long CreationTimeUtcTicks { get; set; }
     public string CurrentModel { get; set; } = string.Empty;
@@ -129,6 +138,23 @@ public sealed class FileCursorState
 /// </summary>
 public sealed class MonitorState
 {
+    /// <summary>在状态所属线程复制可变集合；计价记录不可变，保留逐响应明细而不深拷贝每个 token 对象。</summary>
+    public MonitorState CopyForPersistence()
+    {
+        var copy = (MonitorState)MemberwiseClone();
+        copy.HistoricalReplayUnattributedUsedPercents = new(HistoricalReplayUnattributedUsedPercents);
+        copy.HistoricalReplayUnresolvedFileLengths = new(HistoricalReplayUnresolvedFileLengths, HistoricalReplayUnresolvedFileLengths.Comparer);
+        copy.AuthoritativeRateLimitCheckpoints = new(AuthoritativeRateLimitCheckpoints);
+        copy.FileCursors = FileCursors.ToDictionary(pair => pair.Key, pair => pair.Value.CopyForPersistence(), FileCursors.Comparer);
+        copy.PendingPricingUsages = new(PendingPricingUsages);
+        copy.PendingModels = new(PendingModels, PendingModels.Comparer);
+        copy.PendingServiceTiers = new(PendingServiceTiers, PendingServiceTiers.Comparer);
+        copy.PendingCreditMultipliers = new(PendingCreditMultipliers, PendingCreditMultipliers.Comparer);
+        copy.PendingOfficialLongContextIssues = new(PendingOfficialLongContextIssues, PendingOfficialLongContextIssues.Comparer);
+        copy.Samples = Samples.Select(sample => sample with { PricingUsages = sample.PricingUsages.ToArray() }).ToList();
+        return copy;
+    }
+
     public int ServiceTierTrackingVersion { get; set; }
     public int ResponseAssociationTrackingVersion { get; set; }
     public int HistoricalReplayVersion { get; set; }
@@ -166,6 +192,8 @@ public sealed class MonitorState
     public string LastLimitId { get; set; } = string.Empty;
     public decimal PendingApiEquivalentUsd { get; set; }
     public decimal PendingOfficialLongContextApiEquivalentUsd { get; set; }
+    public bool PendingOfficialLongContextAvailable { get; set; } = true;
+    public HashSet<string> PendingOfficialLongContextIssues { get; set; } = new(StringComparer.Ordinal);
     public TokenUsage PendingUsage { get; set; } = TokenUsage.Zero;
     public List<ResponsePricingUsage> PendingPricingUsages { get; set; } = [];
     public int PendingModelResponseCount { get; set; }
@@ -197,6 +225,8 @@ public sealed record RolloutScanResult(
 {
     public IReadOnlyList<ResponsePricingUsage> PricingUsages { get; init; } = [];
     public decimal OfficialLongContextApiEquivalentUsd { get; init; }
+    public bool OfficialLongContextAvailable { get; init; } = true;
+    public IReadOnlyCollection<string> OfficialLongContextIssues { get; init; } = [];
     public IReadOnlyCollection<string> ServiceTiers { get; init; } = [];
     public IReadOnlyCollection<string> CreditMultipliers { get; init; } = [];
     public string PricingVersion { get; init; } = string.Empty;
@@ -230,6 +260,8 @@ public sealed record HistoricalResponseFact(
     decimal CreditMultiplier)
 {
     public bool ServiceTierRecoveredFromConfig { get; init; }
+    public bool OfficialLongContextAvailable { get; init; } = true;
+    public string OfficialLongContextIssue { get; init; } = string.Empty;
 }
 
 /// <summary>

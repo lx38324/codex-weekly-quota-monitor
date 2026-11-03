@@ -8,11 +8,14 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>Codex周限额监控</AssemblyName>
     <RootNamespace>WeeklyQuotaMonitor</RootNamespace>
-    <Version>1.8.1</Version>
+    <Version>1.10.13</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="protobuf-net" Version="3.4.21" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.9" />
     <ProjectReference Include="..\WeeklyQuotaMonitor.Core\WeeklyQuotaMonitor.Core.csproj" />
   </ItemGroup>
 </Project>

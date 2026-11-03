@@ -19,6 +19,10 @@ The utility installs to `%LOCALAPPDATA%\CodexWeeklyQuotaMonitor`, registers curr
 
 ## Usage
 
+Quota, TPS and OTel pages default to the last **4 hours**. “Today” uses the configurable local monitoring-day start. Missing service token intervals show collection evidence, not substitute measurements or stale history.
+
+Select **Estimated streaming TPS** in Speed → TPS for an item-lifecycle estimate excluding pre-item wait. Matched effective TPS, coverage and exclusion reasons remain visible. Requires matching item IDs and confirmed per-response usage; missing data is not replaced. This is not server decode speed. Legacy speed samples are retained and enriched from existing logs in the background.
+
 - Hover the tray icon for the Standard API-equivalent estimate, usage, and sample count.
 - Single-click performs no window action, avoiding conflicts with double-click.
 - Double-click for the combined overview, history curves, and per-sample token data workspace.
@@ -30,7 +34,8 @@ The utility installs to `%LOCALAPPDATA%\CodexWeeklyQuotaMonitor`, registers curr
 The main window contains:
 
 - **Overview & trends** — quota, used/remaining percentage, reset time, samples, history curves, time filters, and token details.
-- **Speed monitor** — weighted TPS cards, per-model lines and interval details. Both charts support wheel zoom, drag-to-pan and double-click reset. The dropdown sets the initial range; estimates and tables follow the visible window. Exact dates are also available. Earlier speed windows backfill existing logs. TPS is an end-to-end proxy; TTFT is currently unavailable.
+- **Speed monitor** — weighted TPS and a separate **OTel · TTFT** tab with per-model latency charts. Supports wheel zoom, drag-to-pan and exact dates. TPS remains an end-to-end proxy; TTFT requires actual OTLP/HTTP binary metrics at `http://127.0.0.1:4318/v1/metrics`.
+- **Telemetry settings** — loopback port, retention and storage budget (default 256 MiB). Select **Request TTFT (log events)** to compare modes using event labels or uniquely matched local responses. Only minimal summaries are stored; raw logs/traces are not retained. Unconfirmed modes stay unknown. Codex configuration is not modified automatically.
 - **Settings** — polling, data sources, regression, model pricing, language, theme, and startup.
 - **Diagnostics** — non-sensitive facts suitable for a GitHub issue.
 

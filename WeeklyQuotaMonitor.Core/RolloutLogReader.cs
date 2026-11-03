@@ -272,6 +272,9 @@ public sealed partial class RolloutLogReader
         var reusable = previous is not null && previous.CreationTicks == info.CreationTimeUtc.Ticks &&
             info.Length >= previous.Length &&
             (info.Length != previous.Length || info.LastWriteTimeUtc.Ticks == previous.WriteTicks);
+        // 文件身份、长度与写入时间都未变时，已有时间索引仍有效；保留不确定标记以免漏掉坏行。
+        if (reusable && info.Length == previous!.Length)
+            return previous.Uncertain || previous.Latest >= since;
         var offset = reusable ? previous!.Offset : 0;
         var latest = reusable ? previous!.Latest : DateTimeOffset.MinValue;
         var uncertain = reusable && previous!.Uncertain;
@@ -1115,6 +1118,8 @@ public sealed partial class RolloutLogReader
         private TokenUsage _usage = TokenUsage.Zero;
         private decimal _costUsd;
         private decimal _officialLongContextCostUsd;
+        private bool _officialLongContextAvailable = true;
+        private readonly HashSet<string> _officialLongContextIssues = new(StringComparer.Ordinal);
         private int _responseCount;
         private int _unpricedCount;
         private int _malformedLineCount;
@@ -1283,7 +1288,7 @@ public sealed partial class RolloutLogReader
         }
 
         /// <summary>
-        /// 将一个已关联模型响应加入累计；无法公开定价时只计入不可定价统计。
+        /// 将响应加入基础累计，独立保存可选长上下文的可用性；免费审批保留明细，基础无法定价仍明确报告。
         /// </summary>
         /// <param name="timestamp">逐响应用量事件时间。</param>
         /// <param name="model">响应使用的实际模型。</param>
@@ -1302,7 +1307,7 @@ public sealed partial class RolloutLogReader
                 return;
             }
 
-            var pricing = _pricingCatalog.Calculate(model, serviceTier, usage);
+            var pricing = _pricingCatalog.Calculate(model, serviceTier, usage, timestamp);
             if (_historicalWindowDurationMinutes is not null)
             {
                 _historicalResponses.Add(new(
@@ -1317,7 +1322,9 @@ public sealed partial class RolloutLogReader
                     pricing.NormalizedServiceTier,
                     pricing.CreditMultiplier)
                 {
-                    ServiceTierRecoveredFromConfig = serviceTierFromConfig
+                    ServiceTierRecoveredFromConfig = serviceTierFromConfig,
+                    OfficialLongContextAvailable = pricing.OfficialLongContextAvailable,
+                    OfficialLongContextIssue = pricing.OfficialLongContextIssue
                 });
             }
 
@@ -1329,10 +1336,12 @@ public sealed partial class RolloutLogReader
                 return;
             }
 
-            if (_retainPricingUsages) _pricingUsages.Add(new(model, serviceTier, usage));
+            if (_retainPricingUsages) _pricingUsages.Add(new(model, serviceTier, usage) { Timestamp = timestamp });
             _usage = _usage.Add(usage);
             _costUsd += pricing.CostUsd;
             _officialLongContextCostUsd += pricing.OfficialLongContextCostUsd;
+            _officialLongContextAvailable &= pricing.OfficialLongContextAvailable;
+            if (!pricing.OfficialLongContextAvailable) _officialLongContextIssues.Add(pricing.OfficialLongContextIssue);
             _responseCount++;
             _models.Add(model);
             _serviceTiers.Add(FormatServiceTierEvidence(pricing.NormalizedServiceTier, serviceTierFromConfig));
@@ -1368,7 +1377,9 @@ public sealed partial class RolloutLogReader
             _unpricedModels.OrderBy(model => model, StringComparer.OrdinalIgnoreCase).ToArray())
         {
             PricingUsages = _pricingUsages.ToArray(),
-            OfficialLongContextApiEquivalentUsd = _officialLongContextCostUsd,
+            OfficialLongContextApiEquivalentUsd = _officialLongContextAvailable ? _officialLongContextCostUsd : 0,
+            OfficialLongContextAvailable = _officialLongContextAvailable,
+            OfficialLongContextIssues = _officialLongContextIssues.ToArray(),
             ServiceTiers = _serviceTiers.OrderBy(tier => tier, StringComparer.OrdinalIgnoreCase).ToArray(),
             CreditMultipliers = _creditMultipliers.OrderBy(multiplier => multiplier, StringComparer.OrdinalIgnoreCase).ToArray(),
             PricingVersion = _pricingCatalog.PricingVersion,

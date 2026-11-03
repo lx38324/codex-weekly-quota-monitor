@@ -119,14 +119,29 @@ else {
 $settings | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $settingsFile -Encoding utf8
 
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-Set-ItemProperty -LiteralPath $runKey -Name 'CodexWeeklyQuotaMonitor' -Value ('"{0}" --autostart' -f $targetExecutable)
+if (-not (Test-Path -LiteralPath $runKey)) { New-Item -Path $runKey -Force | Out-Null }
+if ($settings.StartWithWindows) {
+    Set-ItemProperty -LiteralPath $runKey -Name 'CodexWeeklyQuotaMonitor' -Value ('"{0}" --autostart' -f $targetExecutable)
+}
+elseif ((Get-Item -LiteralPath $runKey).GetValueNames() -contains 'CodexWeeklyQuotaMonitor') {
+    Remove-ItemProperty -LiteralPath $runKey -Name 'CodexWeeklyQuotaMonitor'
+}
+$shortcutShell = New-Object -ComObject WScript.Shell
+$shortcut = $shortcutShell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'Codex 周限额监控.lnk'))
+$shortcut.TargetPath = $targetFullPath
+$shortcut.Arguments = '--show'
+$shortcut.WorkingDirectory = $resolvedInstallDirectory
+$shortcut.IconLocation = $targetFullPath + ',0'
+$shortcut.Save()
+[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
+[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcutShell)
 
 Write-Host "安装完成：$targetExecutable"
 Write-Host "Codex App Server：$CodexExecutable"
 if ($NoStart) {
-    Write-Host '已写入当前用户开机启动项；按 -NoStart 要求，本次未启动程序。'
+    Write-Host '已按设置同步开机启动并修复开始菜单；按 -NoStart 要求，本次未启动程序。'
 }
 else {
     Start-Process -FilePath $targetExecutable -WindowStyle Hidden
-    Write-Host '程序已启动，并已写入当前用户开机启动项。'
+    Write-Host '程序已启动，已按设置同步开机启动并修复开始菜单。'
 }

@@ -38,7 +38,8 @@
   <data name="CurrentEstimateBaseFormat" xml:space="preserve"><value>{0} · {1}</value></data>
   <data name="CurrentEstimateDualFormat" xml:space="preserve"><value>{0} · Standard {1} · &gt;272K {2}</value></data>
   <data name="SummaryFormat" xml:space="preserve"><value>Authoritative used {0} · latest valid amount point {1} · pending points {2} · samples {3} · archived {4} · sample cap ${5:N2}{6}</value></data>
-  <data name="TrendSummaryFormat" xml:space="preserve"><value>Authoritative used {0} · latest valid {1} · {2} samples ({3} archived) · {4} pending{5}</value></data>
+  <data name="TrendSummaryFormat" xml:space="preserve"><value>Authoritative used {0} · latest sample {1} · viewport ends at {2}
+Table (selected range): {3} points · view {4} · archived {5} · pending {6}{7}</value></data>
   <data name="FilterHint" xml:space="preserve"><value>; some or all samples are filtered by the cap—raise it in Settings</value></data>
   <data name="RegressionLinear" xml:space="preserve"><value>linear regression</value></data>
   <data name="RegressionSegmented" xml:space="preserve"><value>segmented regression</value></data>
@@ -52,6 +53,11 @@
   <data name="ChartAxisAmount" xml:space="preserve"><value>Estimated weekly quota (USD)</value></data>
   <data name="TimeRangeAll" xml:space="preserve"><value>All</value></data>
   <data name="TimeRange24Hours" xml:space="preserve"><value>24 hours</value></data>
+  <data name="TimeRange4Hours" xml:space="preserve"><value>Last 4 hours</value></data>
+  <data name="TimeRangeToday" xml:space="preserve"><value>Today</value></data>
+  <data name="SettingsDayStart" xml:space="preserve"><value>Day starts at (local; previous day before this time)</value></data>
+  <data name="ValidationDayStart" xml:space="preserve"><value>Day start time must be between 00:00 and 23:59.</value></data>
+  <data name="ChartTableScopeHint" xml:space="preserve"><value>Metrics follow the view; the table keeps the selected time range when zooming.</value></data>
   <data name="TimeRange7Days" xml:space="preserve"><value>7 days</value></data>
   <data name="TimeRange30Days" xml:space="preserve"><value>30 days</value></data>
   <data name="GridTime" xml:space="preserve"><value>Local time</value></data>
@@ -103,7 +109,8 @@
   <data name="SettingsMaximumSample" xml:space="preserve"><value>Maximum valid sample amount (USD)</value></data>
   <data name="SettingsOfficialLongContext" xml:space="preserve"><value>Additional amount basis</value></data>
   <data name="SettingsOfficialLongContextOption" xml:space="preserve"><value>Enable official &gt;272K long-context comparison</value></data>
-  <data name="PricingDescription" xml:space="preserve"><value>Select a model and edit its Standard API-equivalent prices in USD per million tokens. Saving reprices the current week and retained history; Auto-review continues to use Luna prices.</value></data>
+  <data name="PricingDescription" xml:space="preserve"><value>Edit Standard API-equivalent prices in USD per million tokens. Saving reprices retained history. ChatGPT auto-review is free after the announcement, regardless of custom prices; earlier checks retain Luna proxy pricing.</value></data>
+  <data name="AutoReviewPricingPolicy" xml:space="preserve"><value>ChatGPT auto-review is free from the announcement timestamp, 2026-10-06 07:13:54 UTC. Earlier checks retain GPT-5.6 Luna proxy pricing. The exact backend switchover is unpublished. This does not mean API-key requests are free. Tokens and speed records are retained.</value></data>
   <data name="PricingModel" xml:space="preserve"><value>Model</value></data>
   <data name="PricingShortContext" xml:space="preserve"><value>Short-context prices (USD / 1M tokens)</value></data>
   <data name="PricingLongContext" xml:space="preserve"><value>Long-context prices (USD / 1M tokens)</value></data>
@@ -205,12 +212,18 @@
   <data name="SpeedNoSamples" xml:space="preserve"><value>No eligible speed samples yet</value></data>
   <data name="SpeedLatest" xml:space="preserve"><value>Latest ({3} · {4}): total {0:N2} TPS · visible {1:N2} TPS · {2} responses</value></data>
   <data name="SpeedMeasurementNote" xml:space="preserve"><value>End-to-end throughput proxy = output tokens / summed response durations. Includes waiting, prefill and transport; excludes identifiable tool waits. Not pure decoding speed. Grouped by model and Standard/Fast/unknown. Settings changes regroup retained data.</value></data>
-  <data name="SpeedTtftUnavailable" xml:space="preserve"><value>TTFT: unavailable. Local rollout logs lack reliable request-send and first-token timestamps. This version does not collect OTel.</value></data>
+  <data name="SpeedTtftUnavailable" xml:space="preserve"><value>JSONL TTFT is unavailable: rollout logs lack reliable first-token timestamps. See the OTel · TTFT tab for live telemetry.</value></data>
   <data name="SpeedRetained" xml:space="preserve"><value>{0} retained responses · Duration ≥ {1} seconds · Last {2} hours. Configure in Settings → Speed monitor.</value></data>
   <data name="SpeedStart" xml:space="preserve"><value>Start (local)</value></data>
   <data name="SpeedEnd" xml:space="preserve"><value>End (local)</value></data>
   <data name="SpeedModel" xml:space="preserve"><value>Model</value></data>
-  <data name="SpeedTier" xml:space="preserve"><value>Service tier</value></data>
+  <data name="SpeedTier" xml:space="preserve"><value>Speed mode</value></data>
+  <data name="SpeedAllTiers" xml:space="preserve"><value>All speed modes (combined)</value></data>
+  <data name="SpeedStandard" xml:space="preserve"><value>Standard</value></data>
+  <data name="SpeedFast" xml:space="preserve"><value>Fast</value></data>
+  <data name="SpeedUnknown" xml:space="preserve"><value>Unknown mode</value></data>
+  <data name="SpeedTierScope" xml:space="preserve"><value>{0} · Standard {1:N0} / Fast {2:N0} / Unknown {3:N0}</value></data>
+  <data name="SpeedUnknownNote" xml:space="preserve"><value>Unknown means no reliable speed-mode label was retained; current settings are not applied to historical observations.</value></data>
   <data name="SpeedSamples" xml:space="preserve"><value>Responses</value></data>
   <data name="SpeedTotalTps" xml:space="preserve"><value>Total TPS</value></data>
   <data name="SpeedVisibleTps" xml:space="preserve"><value>Visible TPS</value></data>
@@ -230,8 +243,116 @@
   <data name="SpeedVisibleCaption" xml:space="preserve"><value>Reasoning excluded · same duration basis</value></data>
   <data name="SpeedGroupCaption" xml:space="preserve"><value>{0:N0} buckets · {1:N0} models</value></data>
   <data name="SpeedCoverage" xml:space="preserve"><value>Cached response coverage: {0} — {1} (local) · {2:N0} summaries. Earlier windows backfill existing logs.</value></data>
-  <data name="SpeedShortNote" xml:space="preserve"><value>End-to-end TPS proxy, not decoding speed · TTFT unavailable · Hover for measurement details</value></data>
+  <data name="SpeedShortNote" xml:space="preserve"><value>End-to-end TPS proxy, not decoding speed · JSONL TTFT unavailable; see the OTel · TTFT tab</value></data>
   <data name="SpeedWindowLoading" xml:space="preserve"><value>Window not fully scanned. Waiting for background backfill; only cached results shown (speed monitoring must be enabled).</value></data>
   <data name="ChartInitialRange" xml:space="preserve"><value>Initial range</value></data>
   <data name="ChartInteractionHint" xml:space="preserve"><value>Wheel: zoom · Drag: pan · Double-click: reset　View: {0:MM-dd HH:mm:ss} — {1:MM-dd HH:mm:ss} (local)</value></data>
+  <data name="ChartReferenceOnly" xml:space="preserve"><value>No samples in view: showing the historical fit for reference, not a current estimate or new samples.</value></data>
+  <data name="OtelTitle" xml:space="preserve"><value>Telemetry · First-token latency</value></data>
+  <data name="OtelEnabled" xml:space="preserve"><value>Enable local OTel metrics receiver</value></data>
+  <data name="OtelPort" xml:space="preserve"><value>Loopback port (Codex config is not changed)</value></data>
+  <data name="OtelDetailDays" xml:space="preserve"><value>Export-interval retention (days)</value></data>
+  <data name="OtelMinuteDays" xml:space="preserve"><value>Minute retention (days)</value></data>
+  <data name="OtelRetentionDays" xml:space="preserve"><value>Hourly retention (days)</value></data>
+  <data name="OtelBudget" xml:space="preserve"><value>Telemetry file budget (MiB)</value></data>
+  <data name="OtelPrivacy" xml:space="preserve"><value>Collection and privacy</value></data>
+  <data name="OtelPrivacyNote" xml:space="preserve"><value>OTLP/HTTP binary metrics only. Logs and traces are intentionally discarded without storing content. Listens on 127.0.0.1 only.</value></data>
+  <data name="OtelValidation" xml:space="preserve"><value>Invalid telemetry settings: port 1024–65535; retention tiers must be ordered; budget 16–1024 MiB.</value></data>
+  <data name="OtelTurnTtft" xml:space="preserve"><value>Turn TTFT</value></data>
+  <data name="OtelServiceTtft" xml:space="preserve"><value>Server TTFT · service</value></data>
+  <data name="OtelIapiTtft" xml:space="preserve"><value>Server TTFT · IAPI</value></data>
+  <data name="OtelTbt" xml:space="preserve"><value>Server time between tokens · service</value></data>
+  <data name="OtelInference" xml:space="preserve"><value>Server inference duration</value></data>
+  <data name="OtelTurnDuration" xml:space="preserve"><value>Turn end-to-end duration</value></data>
+  <data name="OtelToolDuration" xml:space="preserve"><value>Tool call duration</value></data>
+  <data name="OtelBucketMinutes" xml:space="preserve"><value>Bucket minutes</value></data>
+  <data name="OtelMean" xml:space="preserve"><value>Observation-weighted mean (ms)</value></data>
+  <data name="OtelObservations" xml:space="preserve"><value>Observations</value></data>
+  <data name="OtelNotRequests" xml:space="preserve"><value>Histogram observations, not packets or requests</value></data>
+  <data name="OtelResolution" xml:space="preserve"><value>Retained resolution</value></data>
+  <data name="OtelExportInterval" xml:space="preserve"><value>Export interval</value></data>
+  <data name="OtelBoundaryNote" xml:space="preserve"><value>Whole summaries at window boundaries</value></data>
+  <data name="OtelMeasurementNote" xml:space="preserve"><value>Turn TTFT, server timings and tool durations are separate. Whole intervals are included by export end time; per-request timing cannot be recovered. Missing tier is unknown, never inferred from current settings.</value></data>
+  <data name="OtelStatus" xml:space="preserve"><value>Receiver: {0} · Last metrics: {1} · Accepted {2} / rejected {3} · Discarded log/trace packets {4} · {5:N2} MiB · Evicted: {6} rows · Session baselines {7} / duplicates or out of order {8} / discontinuities {9}</value></data>
+  <data name="OtelNotListening" xml:space="preserve"><value>Not listening (disabled or failed)</value></data>
+  <data name="OtelWaiting" xml:space="preserve"><value>No observations for this metric. The first cumulative packet establishes a baseline; only later increments are counted. Configured export does not guarantee that the model supplies this metric.</value></data>
+  <data name="OtelLastError" xml:space="preserve"><value>Last recorded error:</value></data>
+  <data name="OtelReadFailed" xml:space="preserve"><value>Telemetry refresh failed; displayed chart is stale:</value></data>
+  <data name="OtelTruncated" xml:space="preserve"><value>More than 10,000 groups; only the most recent are displayed. Narrow the window or increase bucket minutes.</value></data>
+  <data name="SpeedMetricLineStyles" xml:space="preserve"><value>Solid Standard · Dashed Fast · Dotted unknown · Y-axis {0}</value></data>
+  <data name="OtelRequestTtft" xml:space="preserve"><value>Request TTFT (log events)</value></data>
+  <data name="OtelTierSource" xml:space="preserve"><value>Mode source</value></data>
+  <data name="OtelEventTime" xml:space="preserve"><value>Original event time</value></data>
+  <data name="OtelRequestNote" xml:space="preserve"><value>Match by conversation, time and available tokens, regardless of model. A mismatch does not prove server rerouting; OTel model is not necessarily the served model. Memory work may share a session ID; origins require explicit metadata. Cross-model matches never inherit local speed tiers. Historical enrichment is limited to available local summaries.</value></data>
+  <data name="OtelLocalModel" xml:space="preserve"><value>Linked local model</value></data>
+  <data name="OtelReportedModel" xml:space="preserve"><value>OTel model</value></data>
+  <data name="OtelAssociation" xml:space="preserve"><value>Association</value></data>
+  <data name="OtelMismatchCount" xml:space="preserve"><value>Model mismatch requests</value></data>
+  <data name="OtelOrigin" xml:space="preserve"><value>Explicit origin</value></data>
+  <data name="OtelMatchBasis" xml:space="preserve"><value>Match evidence</value></data>
+  <data name="OtelMismatchesOnly" xml:space="preserve"><value>Model mismatches only</value></data>
+  <data name="OtelSource_rollout-model-mismatch" xml:space="preserve"><value>Different model; tier not inherited</value></data>
+  <data name="OtelEvidence_all" xml:space="preserve"><value>All origins</value></data>
+  <data name="OtelEvidence_unknown" xml:space="preserve"><value>Unconfirmed origin</value></data>
+  <data name="OtelEvidence_memory_extraction" xml:space="preserve"><value>Memory extraction (explicit)</value></data>
+  <data name="OtelEvidence_memory_consolidation" xml:space="preserve"><value>Memory consolidation (explicit)</value></data>
+  <data name="OtelEvidence_auto_review" xml:space="preserve"><value>Auto review (explicit)</value></data>
+  <data name="OtelEvidence_subagent" xml:space="preserve"><value>Subagent (explicit)</value></data>
+  <data name="OtelEvidence_conflicting" xml:space="preserve"><value>Conflicting origins</value></data>
+  <data name="OtelEvidence_mixed" xml:space="preserve"><value>Mixed bucket</value></data>
+  <data name="OtelEvidence_matched" xml:space="preserve"><value>Same model</value></data>
+  <data name="OtelEvidence_model-mismatch" xml:space="preserve"><value>Model mismatch</value></data>
+  <data name="OtelEvidence_ambiguous" xml:space="preserve"><value>Ambiguous association</value></data>
+  <data name="OtelEvidence_unmatched" xml:space="preserve"><value>Unmatched</value></data>
+  <data name="OtelEvidence_background" xml:space="preserve"><value>Separate purpose</value></data>
+  <data name="OtelEvidence_explicit-origin" xml:space="preserve"><value>Explicit event origin</value></data>
+  <data name="OtelEvidence_none" xml:space="preserve"><value>No match</value></data>
+  <data name="OtelEvidence_multiple-candidates" xml:space="preserve"><value>Multiple candidates</value></data>
+  <data name="OtelEvidence_time-tokens" xml:space="preserve"><value>Session + time + tokens</value></data>
+  <data name="OtelEvidence_time-only" xml:space="preserve"><value>Session + time only</value></data>
+  <data name="OtelSource_event" xml:space="preserve"><value>Event</value></data>
+  <data name="OtelSource_rollout" xml:space="preserve"><value>Local response</value></data>
+  <data name="OtelSource_unknown" xml:space="preserve"><value>Unconfirmed</value></data>
+  <data name="OtelSource_unknown-event" xml:space="preserve"><value>Unsupported event tier</value></data>
+  <data name="OtelSource_ambiguous" xml:space="preserve"><value>Multiple candidates</value></data>
+  <data name="OtelSource_mixed" xml:space="preserve"><value>Mixed</value></data>
+  <data name="OtelSource_metric" xml:space="preserve"><value>Metric label</value></data>
+  <data name="StartupStatusLabel" xml:space="preserve"><value>Actual startup status</value></data>
+  <data name="StartupReady" xml:space="preserve"><value>Registered for sign-in (tray only). Save and apply checkbox changes.</value></data>
+  <data name="StartupMissing" xml:space="preserve"><value>Startup entry missing, path mismatched, or app not installed. Enable startup and save to register.</value></data>
+  <data name="StartupBlocked" xml:space="preserve"><value>Disabled by Windows. Enable this entry in Startup Apps.</value></data>
+  <data name="StartupRepairShortcut" xml:space="preserve"><value>Repair Start menu shortcut</value></data>
+  <data name="StartupShortcutRepaired" xml:space="preserve"><value>Start menu repaired. Click to open or activate the dashboard.</value></data>
+  <data name="StartupOpenWindows" xml:space="preserve"><value>Open Windows Startup Apps</value></data>
+  <data name="StartupApplyFailed" xml:space="preserve"><value>Operation incomplete:</value></data>
+  <data name="OtelDiagnosticsHeading" xml:space="preserve"><value>Collection diagnostics (selected metric, receipt time, 5-minute granularity; retained 7 days): received points and stored observations are different counts.</value></data>
+  <data name="OtelDiagnosticsEmpty" xml:space="preserve"><value>No diagnostics in this window. Data before this diagnostic version cannot be reconstructed.</value></data>
+  <data name="OtelDiagnosticsLine" xml:space="preserve"><value>{0}: received {1} points · stored {2} observations · baseline {3} · duplicate {4} · reset/overlap {5} · rejected {6} · ignored {7} · request logs {8} · no increment {9}</value></data>
+  <data name="OtelDiagnosticsAbsent" xml:space="preserve"><value>Request logs exist, but this metric was not received</value></data>
+  <data name="OtelDiagnosticsDetails" xml:space="preserve"><value>Collection diagnostic details</value></data>
+  <data name="OtelDiagnosticsReportHeader" xml:space="preserve"><value>Receipt window {0:MM-dd HH:mm:ss} — {1:MM-dd HH:mm:ss} (local); 5-minute granularity, retained 7 days.
+received=incoming points; stored=committed observations; baseline=first cumulative point; duplicate=retransmission; discontinuity=counter reset/overlap; empty=no increment; ignored=unselected/no recorded value; rejected=whole packet rejected.
+Points are exported points, observations are committed increments only. Received is receipt time, event is the reported event/export end time. Metric names and reasons use original identifiers; no raw content is stored.</value></data>
+  <data name="OtelServerMetricNotExported" xml:space="preserve"><value>WebSocket timing events arrived, but this metric was not exported to the receiver. Event counts cannot distinguish missing server values from missing client export; true service TBT cannot be reconstructed.</value></data>
+  <data name="OtelServerTimingNotReceived" xml:space="preserve"><value>WebSocket events arrived without timing events or this service metric. Client token intervals are not a substitute.</value></data>
+  <data name="OtelServerTransportUnconfirmed" xml:space="preserve"><value>No service metric or WebSocket timing evidence received. This alone does not establish HTTP transport; inspect client export.</value></data>
+  <data name="OtelTransportPoints" xml:space="preserve"><value>WS export points {0:N0} · timing export points {1:N0} (not request counts)</value></data>
+  <data name="SpeedStreamingTps" xml:space="preserve"><value>Estimated streaming TPS</value></data>
+  <data name="SpeedMatchedEffectiveTps" xml:space="preserve"><value>Matched effective TPS</value></data>
+  <data name="SpeedSameSamplesNote" xml:space="preserve"><value>Same responses as streaming estimate, including pre-item wait</value></data>
+  <data name="SpeedStreamingCount" xml:space="preserve"><value>Streaming / total samples</value></data>
+  <data name="SpeedStreamingCoverage" xml:space="preserve"><value>Viewport streaming coverage: {0:N0} / {1:N0} valid responses ({2:N1}%); both estimates use matched samples.</value></data>
+  <data name="SpeedStreamingExclusions" xml:space="preserve"><value>Streaming exclusions</value></data>
+  <data name="SpeedStreamingNote" xml:space="preserve"><value>Output tokens / (last model output - trustworthy start of the first generated item). Includes reasoning; excludes pre-item wait but still includes transport and buffering. Not server decode speed. Requires matching item IDs, confirmed response usage and minimum duration; missing data never uses effective TPS as a substitute.</value></data>
+  <data name="SpeedStreamReason_legacy" xml:space="preserve"><value>Legacy cache without evidence</value></data>
+  <data name="SpeedStreamReason_unverified_usage" xml:space="preserve"><value>Unconfirmed response usage</value></data>
+  <data name="SpeedStreamReason_usage_mismatch" xml:space="preserve"><value>Response usage mismatch</value></data>
+  <data name="SpeedStreamReason_tool_first" xml:space="preserve"><value>Tool-first or missing generated item</value></data>
+  <data name="SpeedStreamReason_hidden_reasoning" xml:space="preserve"><value>Reasoning before visible start</value></data>
+  <data name="SpeedStreamReason_missing_item_time" xml:space="preserve"><value>Missing first-item ID or timing</value></data>
+  <data name="SpeedStreamReason_collapsed_time" xml:space="preserve"><value>Collapsed or very short timing</value></data>
+  <data name="SpeedStreamReason_outside_response" xml:space="preserve"><value>Timing outside response</value></data>
+  <data name="SpeedStreamReason_short_stream" xml:space="preserve"><value>Streaming duration below threshold</value></data>
+  <data name="SpeedStreamReason_retried" xml:space="preserve"><value>Error or retry in response</value></data>
+  <data name="OfficialLongContextUnavailable" xml:space="preserve"><value>{0} samples lack long-context comparison prices and contribute to base pricing only; comparison amounts show —.</value></data>
 </root>

@@ -11,6 +11,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     private readonly JsonStorage _storage;
     private RolloutLogReader _rolloutReader;
     private PricingCatalog _pricingCatalog;
+    private readonly RegressionCurveCache _curveCache = new();
     private readonly SynchronizationContext _uiContext;
     private readonly System.Windows.Forms.Timer _pollTimer;
     private readonly System.Windows.Forms.Timer _speedTimer;
@@ -41,6 +42,9 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     private DateTimeOffset _nextReconnectAttempt = DateTimeOffset.MinValue;
     private MonitorState _state;
     private RateLimitSnapshot? _lastRateLimit;
+    private readonly SemaphoreSlim _stateSaveGate = new(1, 1);
+    private long _stateRevision = 1;
+    private long _savedStateRevision;
 
     public AppSettings Settings { get; private set; }
     public MonitorViewSnapshot CurrentView { get; private set; }
@@ -60,6 +64,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         _rolloutReader = new RolloutLogReader(_pricingCatalog);
         _state = _storage.LoadState(_pricingCatalog.PricingVersion);
         _speedState = _storage.LoadSpeedState();
+        _speedStatus = _speedState.LastIssue;
         _pollTimer = new System.Windows.Forms.Timer();
         _pollTimer.Tick += PollTimerTick;
         _speedTimer = new System.Windows.Forms.Timer { Interval = 5000 };
@@ -80,17 +85,32 @@ public sealed class MonitorCoordinator : IAsyncDisposable
 
         AutostartManager.Apply(Settings.StartWithWindows);
         _pollTimer.Interval = checked(Settings.PollIntervalSeconds * 1000);
-        PrimeRolloutFilesIfNeeded();
+        RepriceStoredHistoryIfNeeded();
+        await PrimeRolloutFilesIfNeededAsync();
         ConfigureRolloutWatcher();
         _pollTimer.Start();
         _speedTimer.Start();
         await RefreshNowAsync();
     }
 
+    /// <summary>内置价格升级后优先离线重算已有逐响应明细；缺失时保留旧视图，日志回填标记仍由正常历史重放完成。</summary>
+    private void RepriceStoredHistoryIfNeeded()
+    {
+        if (CurrentView.SampleCount == 0 || CurrentView.PricingVersion == _pricingCatalog.PricingVersion) return;
+        var previous = CurrentView;
+        _repriceSourceVersion = previous.PricingVersion;
+        var result = SampleRepricer.Apply(_state, _pricingCatalog, _repriceSourceVersion);
+        _repricingNote = FormatRepricingResult(result);
+        _priceRebuildPending = result.MissingUsageIntervals > 0 || result.Errors.Count > 0;
+        _retainedPricingView = _priceRebuildPending ? previous : null;
+        _stateRevision++;
+        PublishView("内置价格已更新；已优先按本地逐响应明细重算，缺失部分仍等待日志回填。");
+    }
+
     /// <summary>
     /// 首次启动时建立 rollout 文件基线；可预期的路径或读取错误会转为可见状态并等待后续轮询重试。
     /// </summary>
-    private void PrimeRolloutFilesIfNeeded()
+    private async Task PrimeRolloutFilesIfNeededAsync()
     {
         if (_state.RolloutFilesPrimed)
         {
@@ -100,7 +120,8 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         try
         {
             _rolloutReader.PrimeExistingFiles(Settings.SessionRoot, _state, Settings.InitialContextLookbackHours);
-            _storage.SaveState(_state);
+            _stateRevision++;
+            await PersistStateAsync();
             RuntimeLog.Write("已建立 rollout 增量游标基线；当前周历史将由版本化重放单独重建。");
         }
         catch (Exception exception) when (
@@ -131,7 +152,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         _polling = true;
         try
         {
-            PrimeRolloutFilesIfNeeded();
+            await PrimeRolloutFilesIfNeededAsync();
             JsonElement result;
             try
             {
@@ -302,8 +323,8 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             _pricingCatalog.PricingVersion,
             pricingCatalog.PricingVersion,
             StringComparison.Ordinal);
-        _storage.SaveSettings(settings);
         AutostartManager.Apply(settings.StartWithWindows);
+        _storage.SaveSettings(settings);
         var sessionRootChanged =
             !string.Equals(Settings.SessionRoot, settings.SessionRoot, StringComparison.OrdinalIgnoreCase);
         var protocolChanged =
@@ -331,7 +352,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
                 _priceRebuildPending = false;
                 _retainedPricingView = null;
             }
-            _storage.SaveState(_state);
+            _stateRevision++;
         }
 
         _pollTimer.Interval = checked(Settings.PollIntervalSeconds * 1000);
@@ -355,6 +376,24 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             _ => "设置已保存并应用。"
         });
     }
+
+    /// <summary>串行保存最新状态；等待期间状态仍归 UI 所有，取得锁后才复制，旧快照不能覆盖新快照。</summary>
+    private async Task PersistStateAsync()
+    {
+        await _stateSaveGate.WaitAsync();
+        try
+        {
+            if (_stateRevision == _savedStateRevision) return;
+            var revision = _stateRevision;
+            var snapshot = _state.CopyForPersistence();
+            await _storage.SaveStateAsync(snapshot);
+            _savedStateRevision = revision;
+        }
+        finally { _stateSaveGate.Release(); }
+    }
+
+    /// <summary>设置落盘后异步保存重算结果；异常交由设置入口显示，脏版本保留供下轮重试。</summary>
+    public Task PersistSettingsStateAsync() => PersistStateAsync();
 
     /// <summary>
     /// 处理定时器触发的低频额度查询；RefreshNowAsync 会吸收所有已分类的可恢复失败。
@@ -431,10 +470,16 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             return;
         }
 
+        var scanRequired = QuotaEstimator.RequiresRolloutScan(_state, snapshot);
+        var previousBaseline = (_state.ReferenceUsedPercent, _state.LastObservedUsedPercent, _state.LastResetAt,
+            _state.LastLimitId, _state.PendingPricingVersion, _state.UnattributedPercentChanges);
+        // 扫描会推进可变游标；即使后续重放失败，也必须保留本轮发生变更的事实。
+        if (scanRequired) _stateRevision++;
         var authoritativeTimelineChanged =
             HistoricalReplayCalculator.RecordAuthoritativeCheckpoint(_state, snapshot);
+        if (authoritativeTimelineChanged) _stateRevision++;
         var scanStart = QuotaEstimator.GetRolloutScanStart(_state, snapshot);
-        var scan = QuotaEstimator.RequiresRolloutScan(_state, snapshot)
+        var scan = scanRequired
             ? _rolloutReader.ScanNew(Settings.SessionRoot, _state, scanStart)
             : RolloutScanResult.Empty;
         var update = QuotaEstimator.Process(
@@ -443,10 +488,15 @@ public sealed class MonitorCoordinator : IAsyncDisposable
             scan,
             Settings.MinimumPercentDelta,
             _pricingCatalog.PricingVersion);
+        if (previousBaseline != (_state.ReferenceUsedPercent, _state.LastObservedUsedPercent, _state.LastResetAt,
+                _state.LastLimitId, _state.PendingPricingVersion, _state.UnattributedPercentChanges))
+            _stateRevision++;
         var replayStatus = await ReplayHistoryIfRequiredAsync(snapshot, authoritativeTimelineChanged);
+        if (_disposed) return;
+        if (!string.IsNullOrEmpty(replayStatus)) _stateRevision++;
         _lastRateLimit = snapshot;
         PruneExpiredSamples();
-        _storage.SaveState(_state);
+        await PersistStateAsync();
         PublishView($"{source}：{(string.IsNullOrEmpty(replayStatus) ? update.Status : replayStatus)}");
     }
 
@@ -493,7 +543,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
                 var replay = HistoricalReplayCalculator.Build(snapshot, facts, _state.AuthoritativeRateLimitCheckpoints);
                 HistoricalReplayCalculator.ApplyToState(_state, replay);
                 _state.HistoricalReplayUnresolvedFileLengths = RolloutLogReader.CaptureFileLengths(replay.UnresolvedSourceFiles);
-                _storage.SaveState(_state);
+                _stateRevision++;
                 statuses.Add($"当前周重放生成 {replay.Samples.Count} 个候选样本，未归因区间 {replay.UnattributedIntervalCount}；");
             }
 
@@ -514,7 +564,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
                     { PricingVersion = catalog.PricingVersion };
                 token.ThrowIfCancellationRequested();
                 HistoricalArchiveReplayCalculator.ApplyToState(_state, archive, historyDays, roots);
-                _storage.SaveState(_state);
+                _stateRevision++;
                 statuses.Add($"旧窗口重建 {archive.Windows.Count} 周、{archive.Windows.Sum(window => window.Samples.Count)} 个样本；");
             }
 
@@ -637,7 +687,8 @@ public sealed class MonitorCoordinator : IAsyncDisposable
                 RolloutLogReader.DiscoverHistoricalSessionRoots(root), DateTimeOffset.Now, hours, _speedCancellation.Token));
             var updated = await _speedTask;
             if (_disposed || !Settings.Speed.Enabled || root != Settings.SessionRoot || hours != SpeedHistoryHours()) return;
-            _storage.SaveSpeedState(updated);
+            await _storage.SaveSpeedStateAsync(updated);
+            if (_disposed) return;
             _speedState = updated;
             _speedStatus = UiText.Format("SpeedUpdated", updated.UpdatedAt!.Value.LocalDateTime,
                 updated.MalformedLines, updated.MissingBoundaries);
@@ -667,7 +718,7 @@ public sealed class MonitorCoordinator : IAsyncDisposable
     private void PruneExpiredSamples()
     {
         var cutoff = DateTimeOffset.Now.AddDays(-Settings.ChartHistoryDays);
-        _state.Samples.RemoveAll(sample => sample.Timestamp < cutoff);
+        if (_state.Samples.RemoveAll(sample => sample.Timestamp < cutoff) > 0) _stateRevision++;
     }
 
     /// <summary>
@@ -713,18 +764,12 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         if (displayedVersion != _pricingCatalog.PricingVersion)
             status = UiText.Get("RepricingShowingPrevious") + " " + status;
         if (!string.IsNullOrEmpty(_repricingNote)) status += " " + _repricingNote;
+        if (Settings.EnableOfficialLongContextEstimate && samples.Any(sample => !sample.OfficialLongContextAvailable))
+            status += " " + UiText.Format("OfficialLongContextUnavailable", samples.Count(sample => !sample.OfficialLongContextAvailable));
         var rejectedCoverage = _state.HistoricalReplayCoverageRejectedIntervals +
             _state.HistoricalArchiveReplayCoverageRejectedIntervals;
         if (rejectedCoverage > 0) status += " " + UiText.Format("ReplayCoverageRetained", rejectedCoverage);
-        var curve = RegressionCalculator.BuildCurve(
-            samples,
-            Settings.Regression,
-            displayedVersion);
-        var officialLongContextCurve =
-            RegressionCalculator.BuildOfficialLongContextCurve(
-                samples,
-                Settings.Regression,
-                displayedVersion);
+        var (curve, officialLongContextCurve) = _curveCache.Get(samples, Settings.Regression, displayedVersion);
         return new(
             DateTimeOffset.Now,
             status,
@@ -785,5 +830,6 @@ public sealed class MonitorCoordinator : IAsyncDisposable
         _pollTimer.Dispose();
         _rolloutWatcher?.Dispose();
         await DisposeAppServerAsync();
+        await PersistStateAsync();
     }
 }

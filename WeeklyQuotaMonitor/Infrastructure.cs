@@ -17,6 +17,7 @@ public sealed class JsonStorage
         PropertyNameCaseInsensitive = false,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
+    private static readonly JsonSerializerOptions StateOptions = new(Options) { WriteIndented = false };
 
     /// <summary>
     /// 创建应用数据目录并读取设置；首次运行时写入默认设置。
@@ -78,9 +79,12 @@ public sealed class JsonStorage
     /// <param name="pricingVersion">当前生效模型价格配置的稳定版本。</param>
     /// <returns>已恢复比较器且与当前价格兼容的监控状态。</returns>
     public MonitorState LoadState(string pricingVersion)
+        => LoadState(AppPaths.StateFile, pricingVersion);
+
+    /// <summary>从 UTF-8 流读取状态，兼容既有缩进文件，不先分配完整 UTF-16 字符串。</summary>
+    public static MonitorState LoadState(string path, string pricingVersion)
     {
-        Directory.CreateDirectory(AppPaths.DataDirectory);
-        if (!File.Exists(AppPaths.StateFile))
+        if (!File.Exists(path))
         {
             var newState = new MonitorState();
             RolloutLogReader.MigrateServiceTierTrackingState(newState);
@@ -88,7 +92,8 @@ public sealed class JsonStorage
             return newState;
         }
 
-        var state = JsonSerializer.Deserialize<MonitorState>(File.ReadAllText(AppPaths.StateFile), Options)
+        using var stream = File.OpenRead(path);
+        var state = JsonSerializer.Deserialize<MonitorState>(stream, StateOptions)
             ?? throw new InvalidDataException("state.json 反序列化结果为空。");
         state.FileCursors = new(state.FileCursors, StringComparer.OrdinalIgnoreCase);
         state.PendingModels = new(state.PendingModels, StringComparer.OrdinalIgnoreCase);
@@ -104,35 +109,114 @@ public sealed class JsonStorage
     }
 
     /// <summary>
-    /// 原子保存文件游标、额度基线、累积量和采样点。
+    /// 后台流式保存状态快照；调用者必须提供独立快照并串行等待同一路径写入。
     /// </summary>
     /// <param name="state">需要持久化的监控状态。</param>
-    public void SaveState(MonitorState state) =>
-        AtomicWrite(AppPaths.StateFile, JsonSerializer.Serialize(state, Options));
+    public Task SaveStateAsync(MonitorState state) => SaveStateAsync(AppPaths.StateFile, state);
 
-    /// <summary>加载独立速度摘要；未知版本或损坏数据保留原错误，不覆盖为新空状态。</summary>
+    /// <summary>在工作线程以有界缓冲序列化，避免同步 Serialize 或整份字符串占用大对象堆。</summary>
+    public static Task SaveStateAsync(string path, MonitorState state) =>
+        Task.Run(() => AtomicWriteAsync(path, state));
+
+    /// <summary>加载可重建速度摘要；损坏时保全原文件和异常，并明确标记等待从 JSONL 重建。</summary>
     public SpeedState LoadSpeedState()
     {
-        if (!File.Exists(AppPaths.SpeedFile)) return new();
-        var state = JsonSerializer.Deserialize<SpeedState>(File.ReadAllText(AppPaths.SpeedFile), Options)
-            ?? throw new InvalidDataException("speed.json 反序列化结果为空。");
-        if (state.Version != 1) throw new InvalidDataException("不支持的速度数据版本。");
+        var state = LoadSpeedState(AppPaths.SpeedFile);
+        if (!string.IsNullOrEmpty(state.LastIssue)) RuntimeLog.Write(state.LastIssue);
+        return state;
+    }
+
+    /// <summary>恢复版本1/2派生速度缓存，旧样本由扫描器保留并补流式证据；未知版本明确失败，不动额度数据。</summary>
+    public static SpeedState LoadSpeedState(string path)
+    {
+        if (!File.Exists(path)) return new();
+        SpeedState state;
+        try
+        {
+            using var stream = File.OpenRead(path);
+            state = JsonSerializer.Deserialize<SpeedState>(stream, StateOptions)
+                ?? throw new InvalidDataException("speed.json 反序列化结果为空。");
+        }
+        catch (JsonException exception)
+        {
+            var archive = path + ".corrupt-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfffffff");
+            File.Move(path, archive);
+            state = new SpeedState { LastIssue = $"速度摘要损坏，原文件保留于 {archive}；将从现存对话日志重建，不影响额度历史。原始错误：{exception}" };
+            AtomicWrite(path, JsonSerializer.Serialize(state, Options));
+            return state;
+        }
+        if (state.Version is not (1 or 2)) throw new InvalidDataException("不支持的速度数据版本。");
         return state;
     }
 
     /// <summary>原子保存独立速度文件，频繁速度更新不重写体积更大的额度历史。</summary>
-    public void SaveSpeedState(SpeedState state) => AtomicWrite(AppPaths.SpeedFile, JsonSerializer.Serialize(state, Options));
+    public Task SaveSpeedStateAsync(SpeedState state) => Task.Run(() => AtomicWriteAsync(AppPaths.SpeedFile, state));
+
+    /// <summary>异步序列化分批刷新 UTF-8 缓冲；强制落盘成功后才原子替换，失败保留原文件并向调用者抛出原异常。</summary>
+    private static async Task AtomicWriteAsync<T>(string path, T value)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + ".tmp";
+        using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None,
+                   16384, FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            await JsonSerializer.SerializeAsync(stream, value, StateOptions).ConfigureAwait(false);
+            await stream.FlushAsync().ConfigureAwait(false);
+            stream.Flush(flushToDisk: true);
+        }
+        await CommitAtomicWriteAsync(temporary, path).ConfigureAwait(false);
+    }
 
     /// <summary>
-    /// 先写同目录临时文件再覆盖目标，避免进程退出留下半个 JSON。
+    /// 先写同目录临时文件并强制落盘，再原子替换；保留上一代完整文件，不把缓存写入当作持久化完成。
     /// </summary>
     private static void AtomicWrite(string path, string content)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + ".tmp";
-        File.WriteAllText(temporary, content);
-        File.Move(temporary, path, true);
+        using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false), leaveOpen: true))
+            { writer.Write(content); writer.Flush(); }
+            stream.Flush(flushToDisk: true);
+        }
+        CommitAtomicWriteAsync(temporary, path).GetAwaiter().GetResult();
     }
+
+    /// <summary>仅对 Windows 明确未改变文件名的共享/锁定及 1175 错误限次等待；不重试部分提交错误，不改为删除后覆盖。</summary>
+    private static async Task CommitAtomicWriteAsync(string temporary, string path)
+    {
+        IOException? firstFailure = null;
+        const int maximumRetries = 5;
+        for (var retry = 0; ; retry++)
+        {
+            try
+            {
+                if (File.Exists(path)) File.Replace(temporary, path, path + ".bak");
+                else File.Move(temporary, path);
+            }
+            catch (IOException exception) when (retry < maximumRetries &&
+                IsRetryableReplaceError(exception) && File.Exists(temporary) && File.Exists(path))
+            {
+                firstFailure ??= exception;
+                await Task.Delay(25 << retry).ConfigureAwait(false);
+                continue;
+            }
+            catch (IOException exception)
+            {
+                exception.Data["AtomicReplaceAttempts"] = retry + 1;
+                if (firstFailure is not null) exception.Data["AtomicReplaceFirstFailure"] = firstFailure.ToString();
+                throw;
+            }
+            if (firstFailure is not null)
+                RuntimeLog.Write($"原子保存经 {retry} 次短时重试完成：{Path.GetFileName(path)}；首次原始错误：{firstFailure}");
+            return;
+        }
+    }
+
+    /// <summary>限定已知 Windows 错误码；1176/1177 可能涉及不同提交阶段，不能与短时占用混为一谈。</summary>
+    private static bool IsRetryableReplaceError(IOException exception) =>
+        OperatingSystem.IsWindows() && (exception.HResult & 0xffff) is 32 or 33 or 1175;
 }
 
 /// <summary>
@@ -388,6 +472,7 @@ public static class AutostartManager
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ValueName = "CodexWeeklyQuotaMonitor";
+    public static string InstalledExecutable => Path.Combine(AppPaths.DataDirectory, "Codex周限额监控.exe");
 
     /// <summary>
     /// 根据设置创建或删除当前用户开机自启项。
@@ -395,11 +480,11 @@ public static class AutostartManager
     /// <param name="enabled">true 表示启用，false 表示禁用。</param>
     public static void Apply(bool enabled)
     {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true)
-            ?? throw new InvalidOperationException("无法打开当前用户 Run 注册表项。");
+        using var key = Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
         if (enabled)
         {
-            key.SetValue(ValueName, $"\"{Environment.ProcessPath}\" --autostart", RegistryValueKind.String);
+            if (!File.Exists(InstalledExecutable)) throw new FileNotFoundException("请先安装到稳定目录再启用开机启动。", InstalledExecutable);
+            key.SetValue(ValueName, $"\"{InstalledExecutable}\" --autostart", RegistryValueKind.String);
         }
         else
         {
@@ -413,8 +498,37 @@ public static class AutostartManager
     /// <returns>已配置开机自启时返回 true。</returns>
     public static bool IsEnabled()
     {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: false)
-            ?? throw new InvalidOperationException("无法读取当前用户 Run 注册表项。");
-        return key.GetValue(ValueName) is string;
+        using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: false);
+        return File.Exists(InstalledExecutable) && string.Equals(key?.GetValue(ValueName) as string,
+            $"\"{InstalledExecutable}\" --autostart", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>显示注册表实际状态而非设置意愿；系统禁用标记只提示用户，不擅自绕过 Windows 启动管理。</summary>
+    public static string Status()
+    {
+        using var approved = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run");
+        var disabled = approved?.GetValue(ValueName) is byte[] bytes && bytes.Length > 0 && bytes[0] is 3 or 7;
+        return UiText.Get(disabled ? "StartupBlocked" : IsEnabled() ? "StartupReady" : "StartupMissing") + "\n" + InstalledExecutable;
+    }
+
+    /// <summary>重建当前用户开始菜单入口，固定安装路径，显式请求打开主窗口；不改写用户其他快捷方式。</summary>
+    public static void RepairShortcut()
+    {
+        if (!File.Exists(InstalledExecutable)) throw new FileNotFoundException("已安装程序不存在。", InstalledExecutable);
+        var shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException("Windows Script Host unavailable");
+        dynamic shell = Activator.CreateInstance(shellType)!;
+        dynamic? shortcut = null;
+        try
+        {
+            shortcut = shell.CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Codex 周限额监控.lnk"));
+            shortcut.TargetPath = InstalledExecutable; shortcut.Arguments = "--show";
+            shortcut.WorkingDirectory = AppPaths.DataDirectory; shortcut.IconLocation = InstalledExecutable + ",0";
+            shortcut.Save();
+        }
+        finally
+        {
+            if (shortcut is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
+            System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+        }
     }
 }

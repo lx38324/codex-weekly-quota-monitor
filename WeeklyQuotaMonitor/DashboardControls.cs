@@ -84,6 +84,12 @@ public sealed class MetricCard : Panel
         _layout.Controls.Add(_title, 0, 0);
         _layout.Controls.Add(_value, 0, 1);
         _layout.Controls.Add(_caption, 0, 2);
+        // 与程序入口一致使用原生 GDI 文字，使独立测量和实际换行采用同一套字体度量。
+        foreach (var label in new[] { _title, _value, _caption })
+        {
+            label.UseCompatibleTextRendering = false;
+            label.UseMnemonic = false;
+        }
         Controls.Add(_layout);
     }
 
@@ -92,7 +98,7 @@ public sealed class MetricCard : Panel
     public int LogicalHeight => Style == MetricCardStyle.Hero ? 100 : 92;
 
     /// <summary>
-    /// 根据当前 DPI 下三行文字的真实首选高度计算卡片高度，同时保留设计基线的最小高度。
+    /// 按目标宽度独立测量文字并遵守缩放后的最小高度；不能复用标签上一次布局的 MaximumSize。
     /// </summary>
     /// <param name="proposedSize">父级计划分配的卡片宽度。</param>
     /// <returns>不会裁切标题、主值和说明文字的卡片尺寸。</returns>
@@ -100,11 +106,14 @@ public sealed class MetricCard : Panel
     {
         var availableWidth = Math.Max(1, proposedSize.Width - Padding.Horizontal);
         var contentHeight = new[] { _title, _value, _caption }.Sum(label =>
-            label.GetPreferredSize(new Size(availableWidth, 0)).Height + label.Margin.Vertical);
+            TextRenderer.MeasureText(label.Text, label.Font,
+                new Size(Math.Max(1, availableWidth - label.Padding.Horizontal), int.MaxValue),
+                TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix).Height +
+            label.Padding.Vertical + label.Margin.Vertical);
         var scaledBaseline = (int)Math.Ceiling(LogicalHeight * DeviceDpi / 96F);
         return new(
             Math.Max(MinimumSize.Width, proposedSize.Width),
-            Math.Max(scaledBaseline, contentHeight + Padding.Vertical + Math.Max(4, DeviceDpi / 24)));
+            Math.Max(MinimumSize.Height, Math.Max(scaledBaseline, contentHeight + Padding.Vertical + Math.Max(4, DeviceDpi / 24))));
     }
 
     /// <summary>按实际卡片内容宽度约束三行文字，字体回退和高 DPI 下允许换行，避免服务器字体环境裁切。</summary>
@@ -227,6 +236,9 @@ public sealed class MetricCard : Panel
 public sealed class DashboardCardGrid : Panel
 {
     private readonly List<MetricCard> _cards = [];
+    /// <summary>速度页启用窄窗换行；总览及已有消费者保留原有单行排列。</summary>
+    [System.ComponentModel.DefaultValue(false)]
+    public bool WrapWhenNarrow { get; init; }
 
     /// <summary>
     /// 构造填充父级的双缓冲指标带。
@@ -250,6 +262,12 @@ public sealed class DashboardCardGrid : Panel
         if (_cards.Count == 0)
         {
             return base.GetPreferredSize(proposedSize);
+        }
+        if (WrapWhenNarrow)
+        {
+            var width = Math.Max(1, proposedSize.Width);
+            var plan = MeasureResponsiveCards(width);
+            return new(width, plan.Height);
         }
 
         var scale = DeviceDpi / 96F;
@@ -317,6 +335,12 @@ public sealed class DashboardCardGrid : Panel
         {
             return;
         }
+        if (WrapWhenNarrow)
+        {
+            var plan = MeasureResponsiveCards(ClientSize.Width);
+            for (var index = 0; index < _cards.Count; index++) _cards[index].Bounds = plan.Bounds[index];
+            return;
+        }
 
         var scale = DeviceDpi / 96F;
         var outerPadding = (int)Math.Round(4 * scale);
@@ -343,6 +367,46 @@ public sealed class DashboardCardGrid : Panel
                 cardHeight);
             x += cardWidth + gap;
         }
+    }
+
+    /// <summary>测量和摆放共享同一排版计划；先分配缩放后的最小宽度，再分配余量，窄窗主卡独占首行。</summary>
+    private (Rectangle[] Bounds, int Height) MeasureResponsiveCards(int width)
+    {
+        var scale = DeviceDpi / 96F;
+        var outer = (int)Math.Round(4 * scale);
+        var gap = (int)Math.Round(10 * scale);
+        var usable = Math.Max(1, width - outer * 2);
+        var minimum = _cards.Max(card => card.MinimumSize.Width);
+        var columns = Math.Min(_cards.Count, Math.Max(1, (usable + gap) / (minimum + gap)));
+        var bounds = new Rectangle[_cards.Count];
+        var top = outer;
+        for (var first = 0; first < _cards.Count;)
+        {
+            var count = first == 0 && columns < _cards.Count && _cards[0].Style == MetricCardStyle.Hero
+                ? 1 : Math.Min(columns, _cards.Count - first);
+            var indices = Enumerable.Range(first, count).ToArray();
+            var minimumSum = indices.Sum(index => _cards[index].MinimumSize.Width);
+            var available = Math.Max(minimumSum, usable - gap * (count - 1));
+            var remainder = available - minimumSum;
+            var weights = indices.Select(index => _cards[index].Style == MetricCardStyle.Hero ? 1.55 : 1.0).ToArray();
+            var widths = new int[count]; var allocated = 0;
+            for (var column = 0; column < count; column++)
+            {
+                widths[column] = column == count - 1 ? available - allocated :
+                    _cards[first + column].MinimumSize.Width + (int)Math.Floor(remainder * weights[column] / weights.Sum());
+                allocated += widths[column];
+            }
+            var height = indices.Select((index, column) => _cards[index].GetPreferredSize(new Size(widths[column], 0)).Height).Max();
+            var left = outer;
+            for (var column = 0; column < count; column++)
+            {
+                bounds[first + column] = new(left, top, widths[column], height);
+                left += widths[column] + gap;
+            }
+            top += height + gap;
+            first += count;
+        }
+        return (bounds, top - gap + outer);
     }
 }
 
@@ -384,6 +448,7 @@ public sealed class ApplicationSidebar : Panel
         _brand.AutoSize = true;
         _brand.AutoSizeMode = AutoSizeMode.GrowAndShrink;
         _brand.ColumnCount = 1;
+        _brand.ColumnStyles.Add(new(SizeType.Percent, 100));
         _brand.RowCount = 3;
         _brand.BackColor = Color.Transparent;
         _brand.Padding = new Padding(6, 0, 0, 0);
@@ -411,6 +476,7 @@ public sealed class ApplicationSidebar : Panel
         _version.Margin = new Padding(6, 0, 0, 0);
 
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
+        root.ColumnStyles.Add(new(SizeType.Percent, 100));
         root.RowStyles.Add(new(SizeType.AutoSize));
         root.RowStyles.Add(new(SizeType.Percent, 100));
         root.RowStyles.Add(new(SizeType.AutoSize));

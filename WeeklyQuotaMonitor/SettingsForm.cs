@@ -15,8 +15,15 @@ public sealed class SettingsPanel : UserControl
     private readonly NumericUpDown _minimumWindowMinutes = Number(1, 100000, 1440, 0);
     private readonly NumericUpDown _minimumDelta = Number(0.001m, 100, 0.1m, 3);
     private readonly NumericUpDown _lookbackHours = Number(1, 720, 24, 0);
-    private readonly CheckBox _startWithWindows = new();
+    private readonly CheckBox _startWithWindows = new() { Name = "StartWithWindows", AutoSize = true };
+    private readonly Label _startupStatus = new() { Name = "StartupStatus", AutoSize = true, MaximumSize = new Size(520, 0) };
+    private readonly Button _repairShortcut = new() { Name = "RepairShortcut", AutoSize = true };
+    private readonly Button _windowsStartup = new() { AutoSize = true };
     private readonly NumericUpDown _historyDays = Number(1, 3650, 90, 0);
+    private readonly DateTimePicker _dayStart = new()
+    {
+        Name = "DayStartTime", Format = DateTimePickerFormat.Custom, CustomFormat = "HH:mm", ShowUpDown = true
+    };
     private readonly CheckBox _enableOfficialLongContextEstimate = new();
     private readonly ComboBox _regressionMode = ChoiceBox();
     private readonly NumericUpDown _linearPoints = Number(1, 10000, 120, 0);
@@ -29,6 +36,13 @@ public sealed class SettingsPanel : UserControl
         2);
     private readonly PricingEditorPanel _pricingEditor = new();
     private readonly CheckBox _speedEnabled = new() { Name = "SpeedEnabled" };
+    private readonly CheckBox _otelEnabled = new() { Name = "OtelEnabled" };
+    private readonly NumericUpDown _otelPort = Number(1024, 65535, 4318, 0);
+    private readonly NumericUpDown _otelDetail = Number(1, 30, 7, 0);
+    private readonly NumericUpDown _otelMinute = Number(1, 90, 30, 0);
+    private readonly NumericUpDown _otelRetention = Number(1, 730, 365, 0);
+    private readonly NumericUpDown _otelBudget = Number(16, 1024, 256, 0);
+    private readonly Label _otelPrivacy = new() { AutoSize = true, MaximumSize = new Size(500, 0) };
     private readonly ComboBox _speedMode = ChoiceBox();
     private readonly NumericUpDown _speedMinutes = Number(1, 1440, 5, 0);
     private readonly NumericUpDown _speedCount = Number(1, 10000, 20, 0);
@@ -90,6 +104,7 @@ public sealed class SettingsPanel : UserControl
         _lookbackHours.Value = settings.InitialContextLookbackHours;
         _startWithWindows.Checked = settings.StartWithWindows;
         _historyDays.Value = settings.ChartHistoryDays;
+        _dayStart.Value = DateTime.Today.AddMinutes(settings.DayStartMinutes);
         _enableOfficialLongContextEstimate.Checked = settings.EnableOfficialLongContextEstimate;
         _linearPoints.Value = settings.Regression.LinearLookbackPoints;
         _segmentHours.Value = (decimal)settings.Regression.SegmentWindowHours;
@@ -97,6 +112,12 @@ public sealed class SettingsPanel : UserControl
         _maximumSampleUsd.Value = settings.Regression.MaximumSampleUsd;
         _pricingEditor.LoadProfiles(settings.ModelPrices);
         _speedEnabled.Checked = settings.Speed.Enabled;
+        _otelEnabled.Checked = settings.Telemetry.Enabled;
+        _otelPort.Value = settings.Telemetry.Port;
+        _otelDetail.Value = settings.Telemetry.DetailDays;
+        _otelMinute.Value = settings.Telemetry.MinuteDays;
+        _otelRetention.Value = settings.Telemetry.RetentionDays;
+        _otelBudget.Value = settings.Telemetry.MaximumMegabytes;
         _speedMinutes.Value = settings.Speed.BucketMinutes;
         _speedCount.Value = settings.Speed.ResponsesPerBucket;
         _speedHours.Value = settings.Speed.HistoryHours;
@@ -125,6 +146,9 @@ public sealed class SettingsPanel : UserControl
         _revert.Text = UiText.Get("Revert");
         _defaults.Text = UiText.Get("RestoreDefaults");
         _startWithWindows.Text = UiText.Get("SettingsAutostart");
+        _repairShortcut.Text = UiText.Get("StartupRepairShortcut");
+        _windowsStartup.Text = UiText.Get("StartupOpenWindows");
+        RefreshStartupStatus();
         _enableOfficialLongContextEstimate.Text = UiText.Get("SettingsOfficialLongContextOption");
         _pricingEditor.ApplyLocalization();
         BindSpeedMode(_speedMode.SelectedValue is SpeedAggregationMode mode ? mode : _activeSettings.Speed.Mode);
@@ -132,7 +156,7 @@ public sealed class SettingsPanel : UserControl
             "SettingsNote",
             CodexExecutableResolver.DesktopPackageLocator,
             PublicApiPricing.PriceObservedDate,
-            PublicApiPricing.AutoReviewPricingAssumption);
+            UiText.Get("AutoReviewPricingPolicy"));
         BindChoices(
             SelectedRegressionMode(),
             SelectedLanguage(),
@@ -147,7 +171,16 @@ public sealed class SettingsPanel : UserControl
     {
         AddSection("SettingsGeneral", [
             ("SettingsAutostart", (Control)_startWithWindows),
-            ("SettingsHistoryDays", _historyDays)]);
+            ("StartupStatusLabel", _startupStatus),
+            ("StartupRepairShortcut", _repairShortcut),
+            ("StartupOpenWindows", _windowsStartup),
+            ("SettingsHistoryDays", _historyDays),
+            ("SettingsDayStart", _dayStart)]);
+        _repairShortcut.Click += RepairShortcutClicked;
+        _windowsStartup.Click += (_, _) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:startupapps") { UseShellExecute = true });
+        var generalPage = _sections.TabPages[0]; generalPage.AutoScroll = true;
+        foreach (RowStyle row in ((TableLayoutPanel)generalPage.Controls[0]).RowStyles) row.SizeType = SizeType.AutoSize;
+        generalPage.Enter += (_, _) => RefreshStartupStatus();
         AddSection("SettingsDataSource", [
             ("SettingsCodexExecutable", WithBrowse(_codexExecutable, BrowseExecutable)),
             ("SettingsAppServerArgs", _codexArguments),
@@ -172,6 +205,16 @@ public sealed class SettingsPanel : UserControl
             ("SpeedCount", _speedCount),
             ("SpeedHistory", _speedHours),
             ("SpeedMinimum", _speedMinimum)]);
+        AddSection("OtelTitle", [
+            ("OtelEnabled", (Control)_otelEnabled), ("OtelPort", _otelPort),
+            ("OtelDetailDays", _otelDetail), ("OtelMinuteDays", _otelMinute),
+            ("OtelRetentionDays", _otelRetention), ("OtelBudget", _otelBudget),
+            ("OtelPrivacy", _otelPrivacy)]);
+        _localizedControls[_otelPrivacy] = "OtelPrivacyNote";
+        var telemetryPage = _sections.TabPages[_sections.TabPages.Count - 1];
+        telemetryPage.AutoScroll = true;
+        var telemetryLayout = (TableLayoutPanel)telemetryPage.Controls[0];
+        foreach (RowStyle row in telemetryLayout.RowStyles) row.SizeType = SizeType.AutoSize;
         var pricing = new TabPage();
         _localizedControls[pricing] = "SettingsPricing";
         pricing.Controls.Add(_pricingEditor);
@@ -255,10 +298,17 @@ public sealed class SettingsPanel : UserControl
             InitialContextLookbackHours = decimal.ToInt32(_lookbackHours.Value),
             StartWithWindows = _startWithWindows.Checked,
             ChartHistoryDays = decimal.ToInt32(_historyDays.Value),
+            DayStartMinutes = _dayStart.Value.Hour * 60 + _dayStart.Value.Minute,
             EnableOfficialLongContextEstimate = _enableOfficialLongContextEstimate.Checked,
             Language = SelectedLanguage(),
             Theme = SelectedTheme(),
             ModelPrices = _pricingEditor.GetProfiles().ToList(),
+            Telemetry = new TelemetryOptions
+            {
+                Enabled = _otelEnabled.Checked, Port = (int)_otelPort.Value,
+                DetailDays = (int)_otelDetail.Value, MinuteDays = (int)_otelMinute.Value,
+                RetentionDays = (int)_otelRetention.Value, MaximumMegabytes = (int)_otelBudget.Value
+            },
             Speed = new SpeedOptions
             {
                 Enabled = _speedEnabled.Checked,
@@ -288,9 +338,32 @@ public sealed class SettingsPanel : UserControl
             return;
         }
 
-        SettingsSaved?.Invoke(settings);
+        try { SettingsSaved?.Invoke(settings); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or InvalidOperationException)
+        {
+            _saveStatus.Text = UiText.Get("StartupApplyFailed") + " " + exception.Message;
+            RuntimeLog.Write(exception.ToString()); RefreshStartupStatus(); return;
+        }
         _activeSettings = settings;
         _saveStatus.Text = UiText.Format("SavedAt", DateTime.Now);
+        RefreshStartupStatus();
+    }
+
+    /// <summary>读取系统真实启动状态；权限失败显示原始原因，不能把失败显示为已关闭。</summary>
+    private void RefreshStartupStatus()
+    {
+        try { _startupStatus.Text = AutostartManager.Status(); }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        { _startupStatus.Text = UiText.Get("StartupApplyFailed") + " " + exception.Message; }
+    }
+
+    /// <summary>用户显式修复稳定的开始菜单入口，保留设置勾选意愿，不顺带打开或关闭自启。</summary>
+    private void RepairShortcutClicked(object? sender, EventArgs e)
+    {
+        try { AutostartManager.RepairShortcut(); _saveStatus.Text = UiText.Get("StartupShortcutRepaired"); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException or InvalidOperationException)
+        { _saveStatus.Text = UiText.Get("StartupApplyFailed") + " " + exception.Message; RuntimeLog.Write(exception.ToString()); }
+        RefreshStartupStatus();
     }
 
     /// <summary>

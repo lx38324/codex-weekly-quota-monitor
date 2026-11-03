@@ -46,8 +46,8 @@ public sealed class PricingCatalog
     /// <param name="serviceTier">响应的 Standard 或 Fast 服务层级证据。</param>
     /// <param name="usage">逐响应 token 分类。</param>
     /// <returns>成功时包含基础与长上下文金额，失败时保留明确原因。</returns>
-    public PricingResult Calculate(string model, string serviceTier, TokenUsage usage) =>
-        PublicApiPricing.Calculate(_profiles, model, serviceTier, usage);
+    public PricingResult Calculate(string model, string serviceTier, TokenUsage usage, DateTimeOffset? timestamp = null) =>
+        PublicApiPricing.Calculate(_profiles, model, serviceTier, usage, timestamp);
 
     /// <summary>
     /// 判断样本是否属于本价格配置及当前金额定义。
@@ -78,12 +78,15 @@ public sealed record PricingResult(
     string NormalizedServiceTier,
     string Error)
 {
+    public bool OfficialLongContextAvailable { get; init; } = true;
+    public string OfficialLongContextIssue { get; init; } = string.Empty;
     /// <summary>
     /// 创建不包含金额的明确不可定价结果。
     /// </summary>
     /// <param name="error">可供诊断和展示的失败原因。</param>
     /// <returns>失败的定价结果。</returns>
-    public static PricingResult Failed(string error) => new(false, 0, 0, 0, 0, false, string.Empty, error);
+    public static PricingResult Failed(string error) => new(false, 0, 0, 0, 0, false, string.Empty, error)
+        { OfficialLongContextAvailable = false, OfficialLongContextIssue = error };
 
     /// <summary>
     /// 用 Standard API 成本、额度倍率和规范化层级创建成功结果。
@@ -121,11 +124,14 @@ public static class PublicApiPricing
 {
     public const string PriceSource = "https://developers.openai.com/api/docs/pricing";
     public const string CreditMultiplierSource = "https://learn.chatgpt.com/docs/agent-configuration/speed#fast-mode";
-    public const string PriceObservedDate = "2026-09-07";
-    public const string PricingVersion = "openai-standard-2026-09-04-response-boundary-confirmed-reset-dual-long-context-astra-v5";
+    public const string PriceObservedDate = "2026-10-27";
+    public const string PricingVersion = "openai-standard-2026-10-27-independent-long-context-v10";
     public const string AmountDefinition = "standard-api-equivalent-no-long-context-surcharge-v1";
     public const string OfficialLongContextAmountDefinition = "standard-api-equivalent-official-long-context-surcharge-v1";
-    public const string AutoReviewPricingAssumption = "codex-auto-review 按 gpt-5.6-luna Standard API 价格计算";
+    public const string AutoReviewPricingAssumption = "ChatGPT 自动审批以 2026-10-06 07:13:54.094 UTC 公告时刻为计价分界：之后免费，之前按 GPT-5.6 Luna 代理计价；非官方后台精确生效时刻";
+    public const string AutoReviewAnnouncementSource = "https://x.com/thsottiaux/status/2107368734981517634";
+    // 公告称 now，不承诺更早追溯；采用公告时刻而非任意整日边界。
+    public static DateTimeOffset AutoReviewFreeFrom { get; } = new(2026, 10, 6, 7, 13, 54, 94, TimeSpan.Zero);
 
     private static readonly IReadOnlyDictionary<string, ModelPriceProfile> Standard =
         BuildStandardProfiles();
@@ -204,11 +210,12 @@ public static class PublicApiPricing
     /// <param name="serviceTier">明确记录的 standard/default/auto 或 fast/priority；未知值失败关闭。</param>
     /// <param name="usage">该模型响应的 token 分类。</param>
     /// <returns>成功时包含美元金额，失败时包含明确原因。</returns>
-    public static PricingResult Calculate(string model, string serviceTier, TokenUsage usage)
-        => BuiltInCatalog.Calculate(model, serviceTier, usage);
+    public static PricingResult Calculate(string model, string serviceTier, TokenUsage usage, DateTimeOffset? timestamp = null)
+        => BuiltInCatalog.Calculate(model, serviceTier, usage, timestamp);
 
     /// <summary>
-    /// 使用给定模型价格字典计算响应成本，由不可变 PricingCatalog 保证一次计算中的价格一致性。
+    /// 独立计算基础金额和可选长上下文对比；缺失对比价格只影响对比，不拒绝已知的基础计费。
+    /// 免费规则只用于本程序的 ChatGPT 套餐额度估算，不代表 API-key 请求价格为零。
     /// </summary>
     /// <param name="profiles">按规范化模型标识索引的价格配置。</param>
     /// <param name="model">rollout 的实际模型标识。</param>
@@ -219,12 +226,30 @@ public static class PublicApiPricing
         IReadOnlyDictionary<string, ModelPriceProfile> profiles,
         string model,
         string serviceTier,
-        TokenUsage usage)
+        TokenUsage usage,
+        DateTimeOffset? timestamp)
     {
         var uncachedInput = usage.GetUncachedInputTokens();
         if (uncachedInput < 0)
         {
             return PricingResult.Failed($"模型 {model} 的输入 token 分类相加超过 input_tokens。 ");
+        }
+
+        if (IsAutoReview(model))
+        {
+            if (timestamp is null)
+                return PricingResult.Failed("自动审批缺少逐响应时间，无法判定是否适用免费规则；需从原始日志补齐。");
+            if (timestamp >= AutoReviewFreeFrom)
+            {
+                // 免费请求仍是成功识别的响应；缺失速度不影响零金额，亦不猜测为 Standard。
+                var tier = serviceTier.Trim().ToLowerInvariant() switch
+                {
+                    "standard" or "default" or "auto" => "standard",
+                    "fast" or "priority" => "fast",
+                    _ => "unknown"
+                };
+                return PricingResult.Priced(0, 0, 0, tier, false);
+            }
         }
 
         var normalizedModel = NormalizeModel(model);
@@ -240,28 +265,31 @@ public static class PublicApiPricing
         }
 
         var longContext = usage.InputTokens > profile.LongContextThresholdTokens;
-        if (longContext && profile.LongContext is null)
-        {
-            return PricingResult.Failed($"当前价格配置没有模型 {model} 的长上下文价格。 ");
-        }
-
-        var officialBand = longContext ? profile.LongContext! : profile.ShortContext;
-        if (usage.CacheWriteInputTokens > 0 &&
-            (profile.ShortContext.CacheWritePerMillion is null || officialBand.CacheWritePerMillion is null))
+        if (usage.CacheWriteInputTokens > 0 && profile.ShortContext.CacheWritePerMillion is null)
         {
             return PricingResult.Failed($"当前价格配置没有模型 {model} 的缓存写入价格。 ");
         }
 
         var baseStandardCost = CalculateBandCost(profile.ShortContext, usage, uncachedInput);
-        var officialLongContextStandardCost = CalculateBandCost(officialBand, usage, uncachedInput);
+        var officialBand = longContext ? profile.LongContext : profile.ShortContext;
+        var issue = officialBand is null ? $"当前价格配置没有模型 {model} 的长上下文价格。" :
+            usage.CacheWriteInputTokens > 0 && officialBand.CacheWritePerMillion is null
+                ? $"当前价格配置没有模型 {model} 的长上下文缓存写入价格。" : string.Empty;
+        var officialAvailable = issue.Length == 0;
+        // 不用基础价格补未知的对比值；数值字段由可用标记约束，界面和回归不能把它当成零费用。
+        var officialCost = officialAvailable ? CalculateBandCost(officialBand!, usage, uncachedInput) : 0;
 
         return PricingResult.Priced(
             baseStandardCost,
-            officialLongContextStandardCost,
+            officialCost,
             multiplier.Multiplier,
             multiplier.NormalizedServiceTier,
-            longContext);
+            longContext) with { OfficialLongContextAvailable = officialAvailable, OfficialLongContextIssue = issue };
     }
+
+    /// <summary>只识别专用自动审批模型标识，不把代码审查、普通 Luna 或其他辅助请求误判为免费。</summary>
+    public static bool IsAutoReview(string model) =>
+        string.Equals(model.Trim(), "codex-auto-review", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 使用指定价格档位计算未乘 ChatGPT 额度倍率的单次 Standard API 成本。
@@ -295,7 +323,7 @@ public static class PublicApiPricing
             return new(false, 0, string.Empty, $"Standard API 等价口径不支持服务层级 {serviceTier}。");
         }
 
-        if (normalizedModel == "gpt-6-astra" ||
+        if (normalizedModel is "gpt-6-astra" or "gpt-6.1-sol" or "gpt-6.1-terra" or "gpt-6-sol" or "gpt-6-luna" ||
             normalizedModel.StartsWith("gpt-5.6-", StringComparison.Ordinal) ||
             normalizedModel == "gpt-5.5")
         {
@@ -339,6 +367,10 @@ public static class PublicApiPricing
         return new Dictionary<string, ModelPriceProfile>(StringComparer.OrdinalIgnoreCase)
         {
             ["gpt-6-astra"] = Profile("gpt-6-astra", 10, 1, 12.5m, 50, 20, 2, 25, 75),
+            ["gpt-6.1-sol"] = Profile("gpt-6.1-sol", 2, 0.1m, 2.5m, 10, 4, 0.2m, 5, 15),
+            ["gpt-6.1-terra"] = Profile("gpt-6.1-terra", 1, 0.05m, 1.25m, 5, 2, 0.1m, 2.5m, 7.5m),
+            ["gpt-6-sol"] = Profile("gpt-6-sol", 2, 0.2m, 2.5m, 10, 4, 0.4m, 5, 15),
+            ["gpt-6-luna"] = Profile("gpt-6-luna", 0.1m, 0.01m, 0.125m, 0.5m, 0.2m, 0.02m, 0.25m, 0.75m),
             ["gpt-5.6-sol"] = Profile("gpt-5.6-sol", 4, 0.4m, 5, 20, 8, 0.8m, 10, 30),
             ["gpt-5.6-terra"] = Profile("gpt-5.6-terra", 2, 0.2m, 2.5m, 12, 4, 0.4m, 5, 18),
             ["gpt-5.6-luna"] = Profile("gpt-5.6-luna", 0.2m, 0.02m, 0.25m, 1.2m, 0.4m, 0.04m, 0.5m, 1.8m),

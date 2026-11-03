@@ -21,11 +21,13 @@ public sealed class AppSettings
     public int InitialContextLookbackHours { get; set; } = 24;
     public bool StartWithWindows { get; set; } = true;
     public int ChartHistoryDays { get; set; } = 90;
+    public int DayStartMinutes { get; set; }
     public bool EnableOfficialLongContextEstimate { get; set; }
     public UiLanguage Language { get; set; } = UiLanguage.Auto;
     public UiTheme Theme { get; set; } = UiTheme.System;
     public RegressionOptions Regression { get; set; } = new();
     public SpeedOptions Speed { get; set; } = new();
+    public TelemetryOptions Telemetry { get; set; } = new();
     public List<ModelPriceProfile> ModelPrices { get; set; } = PublicApiPricing.GetBuiltInProfiles().ToList();
 
     /// <summary>
@@ -43,6 +45,7 @@ public sealed class AppSettings
         if (MinimumPercentDelta <= 0 || MinimumPercentDelta > 100) errors.Add(UiText.Get("ValidationDelta"));
         if (InitialContextLookbackHours < 1) errors.Add(UiText.Get("ValidationLookback"));
         if (ChartHistoryDays < 1) errors.Add(UiText.Get("ValidationHistory"));
+        if (DayStartMinutes is < 0 or >= 1440) errors.Add(UiText.Get("ValidationDayStart"));
         if (Regression.LinearLookbackPoints < 1) errors.Add(UiText.Get("ValidationLinear"));
         if (Regression.SegmentWindowHours <= 0) errors.Add(UiText.Get("ValidationSegment"));
         if (Regression.GaussianBandwidthHours <= 0) errors.Add(UiText.Get("ValidationGaussian"));
@@ -52,6 +55,7 @@ public sealed class AppSettings
             !double.IsFinite(Speed.MinimumDurationSeconds) || Speed.MinimumDurationSeconds is < 1 or > 600)
             errors.Add(UiText.Get("SpeedValidation"));
         ValidateModelPrices(errors);
+        if (Telemetry is null || !Telemetry.IsValid()) errors.Add(UiText.Get("OtelValidation"));
         return errors;
     }
 
@@ -131,7 +135,7 @@ public sealed class AppSettings
 /// </summary>
 public static class AppSettingsMigration
 {
-    public const int CurrentVersion = 6;
+    public const int CurrentVersion = 11;
     public const decimal LegacyMaximumSampleUsd = 1000m;
     public const decimal DefaultMaximumSampleUsd = 10000m;
 
@@ -150,6 +154,31 @@ public static class AppSettingsMigration
         }
 
         var changed = false;
+        // 新模型只补齐一次；保留用户已手动添加的同名价格及其他模型的自定义配置。
+        // 空价格表仍由正常验证报错，不以迁移掩盖损坏或无效配置。
+        if (settings.SettingsSchemaVersion < 8 && settings.ModelPrices is { Count: > 0 })
+        {
+            foreach (var profile in PublicApiPricing.GetBuiltInProfiles().Where(p => p.Model is "gpt-6-sol" or "gpt-6-luna"))
+                if (!settings.ModelPrices.Any(p => string.Equals(p.Model?.Trim(), profile.Model, StringComparison.OrdinalIgnoreCase)))
+                {
+                    settings.ModelPrices.Add(profile);
+                    changed = true;
+                }
+        }
+        // 旧设置只补入 6.1 Sol，不覆盖用户已配置的同名模型价格。
+        if (settings.SettingsSchemaVersion < 9 && settings.ModelPrices is { Count: > 0 } &&
+            !settings.ModelPrices.Any(p => string.Equals(p.Model?.Trim(), "gpt-6.1-sol", StringComparison.OrdinalIgnoreCase)))
+        {
+            settings.ModelPrices.Add(PublicApiPricing.GetBuiltInProfiles().Single(p => p.Model == "gpt-6.1-sol"));
+            changed = true;
+        }
+        // 只补入缺失的 6.1 Terra；同名自定义价格和其他模型的缓存写、长上下文设置保持原样。
+        if (settings.SettingsSchemaVersion < 11 && settings.ModelPrices is { Count: > 0 } &&
+            !settings.ModelPrices.Any(p => string.Equals(p.Model?.Trim(), "gpt-6.1-terra", StringComparison.OrdinalIgnoreCase)))
+        {
+            settings.ModelPrices.Add(PublicApiPricing.GetBuiltInProfiles().Single(p => p.Model == "gpt-6.1-terra"));
+            changed = true;
+        }
         if (settings.SettingsSchemaVersion < 5 && !modelPricesPresent)
         {
             settings.ModelPrices = PublicApiPricing.GetBuiltInProfiles().ToList();

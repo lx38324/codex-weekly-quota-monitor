@@ -27,6 +27,30 @@ public sealed record RegressionAnalysis(
 /// </summary>
 public static class RegressionCalculator
 {
+    /// <summary>把已有拟合折线投影到视口边界：插值相邻段，边缘沿最后一段延伸；不新增样本或改变估值贡献。</summary>
+    public static IReadOnlyList<CurvePoint> ProjectToWindow(IReadOnlyList<CurvePoint> curve,
+        DateTimeOffset start, DateTimeOffset end)
+    {
+        if (end <= start) throw new ArgumentException("绘图窗口开始必须早于结束。");
+        if (curve.Count == 0) return [];
+        var points = curve.OrderBy(point => point.Timestamp).DistinctBy(point => point.Timestamp).ToArray();
+        var result = new List<CurvePoint> { new(start, CurveValueAt(points, start)) };
+        result.AddRange(points.Where(point => point.Timestamp > start && point.Timestamp < end));
+        result.Add(new(end, CurveValueAt(points, end)));
+        return result;
+    }
+
+    /// <summary>按现有折线求指定时间的绘制值；单点拟合为水平线，不将边界插值点作为训练数据。</summary>
+    private static decimal CurveValueAt(CurvePoint[] points, DateTimeOffset time)
+    {
+        if (points.Length == 1) return points[0].Value;
+        var right = Array.FindIndex(points, point => point.Timestamp >= time);
+        right = right < 0 ? points.Length - 1 : Math.Clamp(right, 1, points.Length - 1);
+        var left = points[right - 1];
+        var fraction = (decimal)(time - left.Timestamp).Ticks / (points[right].Timestamp - left.Timestamp).Ticks;
+        return Math.Max(0, left.Value + (points[right].Value - left.Value) * fraction);
+    }
+
     /// <summary>
     /// 过滤旧金额口径、旧价格版本和超过上限的异常样本，再生成与采样时间对齐的曲线。
     /// </summary>
@@ -112,7 +136,7 @@ public static class RegressionCalculator
             samples,
             options,
             sample => sample.OfficialLongContextEstimatedWeeklyQuotaUsd,
-            PublicApiPricing.PricingVersion);
+            PublicApiPricing.PricingVersion, requireOfficial: true);
 
     /// <summary>
     /// 按指定价格版本的官方长上下文金额生成曲线及当前估值贡献样本。
@@ -125,10 +149,10 @@ public static class RegressionCalculator
         IReadOnlyList<QuotaSample> samples,
         RegressionOptions options,
         string pricingVersion) =>
-        Analyze(samples, options, sample => sample.OfficialLongContextEstimatedWeeklyQuotaUsd, pricingVersion);
+        Analyze(samples, options, sample => sample.OfficialLongContextEstimatedWeeklyQuotaUsd, pricingVersion, requireOfficial: true);
 
     /// <summary>
-    /// 按指定金额选择器过滤当前版本样本并执行配置的回归或聚合算法。
+    /// 过滤当前版本样本并回归；只有对比分析才要求对比可用，基础分析不受此标记影响。
     /// </summary>
     /// <param name="samples">原始周额度反推样本。</param>
     /// <param name="options">回归模式和窗口参数。</param>
@@ -139,10 +163,12 @@ public static class RegressionCalculator
         IReadOnlyList<QuotaSample> samples,
         RegressionOptions options,
         Func<QuotaSample, decimal> valueSelector,
-        string pricingVersion)
+        string pricingVersion,
+        bool requireOfficial = false)
     {
         var points = samples
             .Where(sample => PublicApiPricing.IsSampleForVersion(sample, pricingVersion))
+            .Where(sample => !requireOfficial || sample.OfficialLongContextAvailable)
             .OrderBy(sample => sample.Timestamp)
             .Select(sample => new CurvePoint(sample.Timestamp, valueSelector(sample)))
             .Where(point => point.Value > 0)

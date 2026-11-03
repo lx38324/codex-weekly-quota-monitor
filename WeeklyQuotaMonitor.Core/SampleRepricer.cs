@@ -19,6 +19,7 @@ public static class SampleRepricer
     /// 每个原始采样区间只生成一份目标价格结果；保留旧价格版本，重复调用不会增加重复样本。
     /// 只迁移指定展示版本的区间，避免把更早算法已弃用的记录再次复活；未指定时处理全部区间。
     /// 返回成功覆盖区间数、缺失明细数和明确计价失败，供 UI 决定是否仍需扫描日志。
+    /// 无逐响应时间的旧审批仅在公告前区间沿用旧价；基础金额独立于可选对比，缺失对比只标为不可用。
     /// </summary>
     public static RepricingResult Apply(MonitorState state, PricingCatalog catalog, string? sourcePricingVersion = null)
     {
@@ -31,7 +32,10 @@ public static class SampleRepricer
         var errors = new HashSet<string>(StringComparer.Ordinal);
         foreach (var group in groups)
         {
-            var source = group.FirstOrDefault(HasCompleteUsage);
+            // 同一区间可能同时有旧明细与日志补齐版本；优先使用能够判断免费边界的事实。
+            var source = group.Where(HasCompleteUsage).OrderByDescending(sample =>
+                sample.Timestamp < PublicApiPricing.AutoReviewFreeFrom || sample.PricingUsages.All(item =>
+                    !PublicApiPricing.IsAutoReview(item.Model) || item.Timestamp is not null)).FirstOrDefault();
             if (source is null)
             {
                 missing++;
@@ -45,7 +49,9 @@ public static class SampleRepricer
             }
 
             var results = source.PricingUsages.Select(item =>
-                catalog.Calculate(item.Model, item.ServiceTier, item.Usage)).ToArray();
+                catalog.Calculate(item.Model, item.ServiceTier, item.Usage,
+                    item.Timestamp ?? (source.Timestamp < PublicApiPricing.AutoReviewFreeFrom
+                        ? source.Timestamp : (DateTimeOffset?)null))).ToArray();
             if (results.Any(result => !result.Success))
             {
                 foreach (var failure in results.Where(result => !result.Success))
@@ -54,13 +60,17 @@ public static class SampleRepricer
             }
 
             var cost = results.Sum(result => result.CostUsd);
-            var longCost = results.Sum(result => result.OfficialLongContextCostUsd);
+            var officialAvailable = results.All(result => result.OfficialLongContextAvailable);
+            var longCost = officialAvailable ? results.Sum(result => result.OfficialLongContextCostUsd) : 0;
             var updated = source with
             {
                 IntervalApiEquivalentUsd = cost,
                 EstimatedWeeklyQuotaUsd = cost * 100m / source.DeltaPercent,
                 OfficialLongContextIntervalApiEquivalentUsd = longCost,
                 OfficialLongContextEstimatedWeeklyQuotaUsd = longCost * 100m / source.DeltaPercent,
+                OfficialLongContextAvailable = officialAvailable,
+                OfficialLongContextIssue = string.Join("；", results.Where(result => !result.OfficialLongContextAvailable)
+                    .Select(result => result.OfficialLongContextIssue).Distinct()),
                 AmountDefinition = PublicApiPricing.AmountDefinition,
                 OfficialLongContextAmountDefinition = PublicApiPricing.OfficialLongContextAmountDefinition,
                 PricingVersion = catalog.PricingVersion,

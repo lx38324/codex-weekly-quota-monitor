@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using WeeklyQuotaMonitor;
 using WeeklyQuotaMonitor.Core;
 
@@ -10,16 +11,101 @@ namespace WeeklyQuotaMonitor.BusinessTests;
 /// </summary>
 internal static class Program
 {
+    /// <summary>读取操作系统的实际窗口可见性，不能用 WinForms Visible 替代此验收。</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr window);
+
+    /// <summary>在同一隔离桌面用 SW_HIDE 子进程覆盖真实隐藏启动语义，保留原生可见性和失败退出码。</summary>
+    private static void TestHiddenStartupDashboard()
+    {
+        var exitCode = GuiTestDesktop.RunHiddenChild(["--verify-hidden-dashboard"], 20000);
+        if (exitCode != 0)
+            throw new InvalidOperationException($"隐藏启动后的窗口未正确显示，子进程退出码：{exitCode}。");
+    }
+
+    /// <summary>模拟后台首次更新、托盘打开、关闭再打开和最大化重开，验证原生可见性及最新数据。</summary>
+    private static void VerifyHiddenStartupDashboard()
+    {
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        var settings = new AppSettings();
+        using var form = new ChartForm(settings, _ => { });
+        var view = CreateDashboardPreviewView();
+        for (var index = 0; index < 5; index++) form.UpdateView(view, settings.Regression);
+        form.ShowDashboardTab();
+        Application.DoEvents();
+        if (!IsWindowVisible(form.Handle))
+            throw new InvalidOperationException("首次打开仅设置了托管 Visible，原生窗口仍隐藏。");
+        form.WindowState = FormWindowState.Maximized;
+        form.Close();
+        if (form.Visible || form.IsDisposed)
+            throw new InvalidOperationException("用户关闭应隐藏而不是销毁主窗口。");
+        form.UpdateView(view, settings.Regression);
+        form.ShowDashboardTab();
+        Application.DoEvents();
+        if (!IsWindowVisible(form.Handle) || form.WindowState != FormWindowState.Maximized)
+            throw new InvalidOperationException("重新打开必须实际可见且保留最大化状态。");
+        form.WindowState = FormWindowState.Minimized;
+        form.ShowSettingsTab(settings);
+        Application.DoEvents();
+        if (!IsWindowVisible(form.Handle) || form.WindowState == FormWindowState.Minimized ||
+            form.SelectedSection != DashboardSection.Settings)
+            throw new InvalidOperationException("从最小化打开设置入口未恢复可见窗口。");
+    }
+
     /// <summary>
-    /// 顺序执行全部业务测试；任一断言失败时以异常和非零退出码暴露问题。
+    /// 先进入隔离桌面再执行所有测试或截图；任一断言失败时以原始异常和非零退出码暴露问题。
     /// </summary>
     [STAThread]
     private static void Main(string[] arguments)
     {
+        // 无控制台的隔离进程不能依赖 Windows OEM 代码页；管道统一 UTF-8，保留中文错误原文。
+        Console.OutputEncoding = new UTF8Encoding(false);
+        var workerArguments = GuiTestDesktop.Enter(arguments);
+        if (workerArguments is null) return;
+        arguments = workerArguments;
         UiText.SetLanguage(UiLanguage.ChineseSimplified);
         AppTheme.Set(UiTheme.Light);
         if (arguments.Length > 0)
         {
+            if (arguments.Length == 1 && arguments[0] == "--test-long-context-independence") { LongContextIndependenceTests.Run(); return; }
+            if (arguments.Length == 2 && arguments[0] == "--audit-long-context-independence") { LongContextIndependenceTests.Audit(arguments[1]); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-terra-quota-display") { Gpt61TerraTests.Run(); QuotaDisplayFilterTests.Run(); return; }
+            if (arguments.Length == 2 && arguments[0] == "--capture-quota-display") { QuotaDisplayFilterTests.Run(arguments[1]); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-speed-layout") { SpeedLayoutTests.Run(); return; }
+            if (arguments.Length == 2 && arguments[0] == "--capture-speed-layout") { SpeedLayoutTests.Run(arguments[1]); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-speed-display") { SpeedDisplayFilterTests.Run(); return; }
+            if (arguments.Length == 4 && arguments[0] == "--benchmark-state-storage")
+            { StateStoragePerformanceTests.Benchmark(arguments[1], arguments[2], arguments[3]); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-state-storage") { StateStoragePerformanceTests.Run(); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-streaming-speed") { StreamingSpeedTests.Run(); StreamingSpeedTests.VerifyUi(); return; }
+            if (arguments.Length == 2 && arguments[0] == "--audit-streaming-speed") { StreamingSpeedTests.Audit(arguments[1]); return; }
+            if (arguments.Length == 2 && arguments[0] == "--capture-streaming-ui") { Application.EnableVisualStyles(); StreamingSpeedTests.VerifyUi(arguments[1]); return; }
+            if (arguments.Length == 3 && arguments[0] == "--audit-telemetry-models")
+            { TelemetryCorrelationAudit.Capture(arguments[1], arguments[2], modelsOnly: true); return; }
+            if (arguments.Length == 2 && arguments[0] == "--capture-startup") { StartupTests.Capture(arguments[1]); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-telemetry-correlation") { TelemetryCorrelationAudit.Verify(); return; }
+            if (arguments.Length == 3 && arguments[0] == "--audit-telemetry-correlation")
+            { TelemetryCorrelationAudit.Capture(arguments[1], arguments[2]); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-telemetry-attributes") { TelemetryAttributeAudit.Verify(); return; }
+            if (arguments.Length == 3 && arguments[0] == "--audit-telemetry-attributes")
+            { TelemetryAttributeAudit.Capture(arguments[1], arguments[2]); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-telemetry") { TelemetryTests.Run(); return; }
+            if (arguments.Length == 2 && arguments[0] == "--capture-telemetry") { TelemetryTests.Capture(arguments[1]); return; }
+            if (arguments.Length == 2 && arguments[0] == "--capture-telemetry-ui") { TelemetryTests.VerifyUi(arguments[1]); return; }
+            if (arguments.Length == 2 && arguments[0] == "--capture-speed-ui")
+            { Application.EnableVisualStyles(); TestSpeedPanelAndSettings(arguments[1]); return; }
+            if (arguments.Length == 2 && arguments[0] == "--capture-range-ui")
+            { Application.EnableVisualStyles(); TestIndependentTableRangesAndDayStart(arguments[1]); return; }
+            if (arguments.Length == 2 && arguments[0] == "--capture-telemetry-ui-en")
+            { UiText.SetLanguage(UiLanguage.English); TelemetryTests.VerifyUi(arguments[1]); return; }
+            if (arguments.Length == 1 && arguments[0] == "--verify-hidden-dashboard")
+            {
+                VerifyHiddenStartupDashboard();
+                return;
+            }
             if (arguments.Length == 2 && string.Equals(arguments[0], "--capture-dashboard", StringComparison.Ordinal))
             {
                 CaptureDashboard(arguments[1]);
@@ -43,6 +129,25 @@ internal static class Program
 
         var tests = new Action[]
         {
+            GuiTestDesktop.VerifyIsolation,
+            StartupTests.Run,
+            RequestTelemetryTests.Run,
+            BackgroundPerformanceTests.Run,
+            () => SpeedLayoutTests.Run(),
+            SpeedDisplayFilterTests.Run,
+            StateStoragePerformanceTests.Run,
+            StreamingSpeedTests.Run,
+            () => StreamingSpeedTests.VerifyUi(),
+            Gpt6SolLunaTests.Run,
+            Gpt61SolTests.Run,
+            Gpt61TerraTests.Run,
+            LongContextIndependenceTests.Run,
+            () => QuotaDisplayFilterTests.Run(),
+            AutoReviewFreeTests.Run,
+            TelemetryCorrelationAudit.Verify,
+            TelemetryAttributeAudit.Verify,
+            TelemetryTests.Run,
+            () => TelemetryTests.VerifyUi(),
             TestAutomaticWindowsLanguageSelection,
             TestManualLanguagePersistsAndOverridesWindows,
             TestSettingsSchema2AddsAppearancePreferences,
@@ -51,9 +156,12 @@ internal static class Program
             TestThemeSelectionRespectsManualOverride,
             TestDashboardLayoutAtSupportedDpiScales,
             TestMetricCardWrapsAcrossFonts,
+            TestCardMeasurementAndHiddenRefresh,
+            TestHiddenStartupDashboard,
             TestDashboardFitsReportedViewport,
             TestDashboardFitsHighScaleScreenshotViewport,
-            TestTrendControlsFitHighlightAndDefaultToThirtyDays,
+            TestTrendControlsFitHighlightAndDefaultToFourHours,
+            TelemetryTests.VerifyMissingServiceTiming,
             TestAstraShortContextStandardPricing,
             TestAstraLongContextStandardPricing,
             TestAstraFastCreditMultiplier,
@@ -64,9 +172,11 @@ internal static class Program
             TestHistoricalScanCancellationAndProgress,
             TestSpeedWeightedBuckets,
             TestSpeedToolWaitAndPersistence,
-            TestSpeedPanelAndSettings,
+            () => TestSpeedPanelAndSettings(),
             TestCustomTimeWindows,
             TestInteractiveChartWindows,
+            () => TestIndependentTableRangesAndDayStart(),
+            TestChartBoundsAndReferenceCurve,
             TestSpeedWindowBackfill,
             TestHistoricalScanStaleFileTimeAcrossReset,
             TestReplayRejectsReducedCoverage,
@@ -378,6 +488,41 @@ internal static class Program
         }
     }
 
+    /// <summary>复现窄宽度污染首选高度及隐藏期间持续刷新；恢复后卡片不得保留旧换行高度而挤压图表。</summary>
+    private static void TestCardMeasurementAndHiddenRefresh()
+    {
+        using var card = new MetricCard();
+        card.SetContent("重置时间", "9/15 09:26", "按本地时间显示");
+        card.Size = new Size(200, 130); card.CreateControl(); card.PerformLayout();
+        var expected = card.GetPreferredSize(new Size(200, 0)).Height;
+        card.Size = new Size(45, 130); card.PerformLayout();
+        Equal(expected, card.GetPreferredSize(new Size(200, 0)).Height,
+            "对同一目标宽度的测量不能依赖上一次狭窄布局");
+        using var form = new ChartForm(new AppSettings(), _ => { });
+        var view = CreateDashboardPreviewView();
+        form.UpdateView(view, new RegressionOptions()); form.ShowDashboardTab(); Application.DoEvents();
+        var grid = FindControls<DashboardCardGrid>(form).Single();
+        var initialHeight = grid.Height;
+        form.Hide();
+        for (var i = 0; i < 120; i++) form.UpdateView(view with { UpdatedAt = view.UpdatedAt.AddMinutes(i), SampleCount = 500 + i }, new RegressionOptions());
+        form.ShowDashboardTab(); Application.DoEvents();
+        Equal(true, Math.Abs(grid.Height - initialHeight) <= 8, "隐藏刷新后卡片不能异常增高");
+        Equal(true, FindControls<MetricCard>(form).Any(c => c.AccessibleName!.Contains("619")), "重新打开必须应用后台最新数据");
+        UiText.SetLanguage(UiLanguage.English);
+        try
+        {
+            form.ApplyPreferences(new AppSettings { Language = UiLanguage.English });
+            var sidebar = FindControls<ApplicationSidebar>(form).Single();
+            var product = FindControls<Label>(sidebar).Single(label => label.Name == "SidebarProductLabel");
+            product.UseCompatibleTextRendering = false;
+            form.Hide(); form.ShowDashboardTab(); Application.DoEvents();
+            Equal(true, sidebar.ClientRectangle.Contains(sidebar.RectangleToClient(product.RectangleToScreen(product.ClientRectangle))),
+                "重新打开后英文品牌文字也必须位于侧栏内");
+        }
+        finally { UiText.SetLanguage(UiLanguage.ChineseSimplified); }
+        form.Hide();
+    }
+
     /// <summary>
     /// 验证用户截图对应的 1160×730 客户区内五张指标卡、趋势图和连接徽标完整可见。
     /// </summary>
@@ -453,9 +598,9 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证高缩放下系列按钮完整容纳末字、选中状态具有实色层级，且首次时间范围为最近 30 天。
+    /// 验证高缩放下系列按钮完整容纳末字、选中状态具有实色层级，且首次时间范围为最近 4 小时。
     /// </summary>
-    private static void TestTrendControlsFitHighlightAndDefaultToThirtyDays()
+    private static void TestTrendControlsFitHighlightAndDefaultToFourHours()
     {
         using var form = new ChartForm(new AppSettings(), _ => { });
         form.ClientSize = new Size(1261, 773);
@@ -467,7 +612,7 @@ internal static class Program
 
         var timeRange = FindControls<ComboBox>(form)
             .Single(comboBox => comboBox.Name == "HistoryRangeComboBox");
-        Equal(UiText.Get("TimeRange30Days"), timeRange.Text, "首次打开趋势图应默认显示最近 30 天");
+        Equal(UiText.Get("TimeRange4Hours"), timeRange.Text, "首次打开趋势图应默认显示最近 4 小时");
 
         var visibleSeriesOptions = FindControls<CheckBox>(form)
             .Where(option => option.Appearance == Appearance.Button && option.Visible)
@@ -560,13 +705,15 @@ internal static class Program
     }
 
     /// <summary>
-    /// 在真实 WinForms 句柄和当前 Windows DPI 下渲染总览页 PNG，供发布前人工检查布局与视觉层级。
+    /// 在真实 WinForms 句柄和当前 Windows DPI 下渲染总览页 PNG；将合成样本平移至近期，检查默认4小时的有数据布局。
     /// </summary>
     /// <param name="outputPath">需要写入的 PNG 绝对或相对路径。</param>
     private static void CaptureDashboard(string outputPath, bool repricing = false)
     {
         using var form = new ChartForm(new AppSettings(), _ => { });
         var view = CreateDashboardPreviewView();
+        var offset = DateTimeOffset.Now.AddMinutes(-10) - view.Samples.Max(s => s.Timestamp);
+        view = view with { Samples = view.Samples.Select(s => s with { Timestamp = s.Timestamp + offset }).ToArray() };
         if (repricing) view = view with
         {
             ShowingPreviousPrices = true,
@@ -695,6 +842,7 @@ internal static class Program
         using var form = new ChartForm(settings, _ => { });
         form.UpdateView(view, settings.Regression);
         var grid = FindControls<DataGridView>(form).Single();
+        SelectTimeRange(FindControls<ComboBox>(form).Single(box => box.Name == "HistoryRangeComboBox"), "TimeRangeAll");
         var timestampCell = grid.Rows[0].Cells[0];
         if (timestampCell.FormattedValue is not string formattedTimestamp)
         {
@@ -805,6 +953,7 @@ internal static class Program
         using var form = new ChartForm(settings, _ => { });
         form.UpdateView(view, settings.Regression);
         form.ShowChartTab();
+        SelectTimeRange(FindControls<ComboBox>(form).Single(box => box.Name == "HistoryRangeComboBox"), "TimeRangeAll");
         Equal(DashboardSection.Dashboard, form.SelectedSection, "托盘图表入口应直达合并后的概览与趋势工作台");
 
         var estimate = FindControls<Label>(form)
@@ -814,7 +963,7 @@ internal static class Program
         var summary = FindControls<Label>(form)
             .Single(label => label.Name == "HistorySummaryLabel");
         Equal(true, summary.Text.Contains("权威已用 18.00%", StringComparison.Ordinal), "图表外应显示当前权威百分比");
-        Equal(true, summary.Text.Contains("最新有效点 16.00%", StringComparison.Ordinal), "图表外应区分最新有效金额点");
+        Equal(true, summary.Text.Contains("最新采样 16.00%", StringComparison.Ordinal), "图表外应区分最新有效金额点");
         Equal(true, summary.Text.Contains("待归因 1", StringComparison.Ordinal), "图表外应显示待恢复额度点数量");
 
         var checkBoxes = FindControls<CheckBox>(form).ToArray();
@@ -839,7 +988,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证默认 30 天和全部时间会分别重算同一份估值、贡献计数与曲线高亮，并保持卡片和横幅口径一致。
+    /// 验证默认 4 小时、30 天和全部时间分别重算估值与贡献高亮，并保持卡片和横幅一致。
     /// </summary>
     private static void TestDashboardRangeUsesOneContributionScope()
     {
@@ -847,7 +996,7 @@ internal static class Program
         var oldSamples = Enumerable.Range(0, 10)
             .Select(index => CurrentSample(now.AddDays(-60 + index), 500m + index * 10m));
         var recentSamples = Enumerable.Range(0, 21)
-            .Select(index => CurrentSample(now.AddDays(-20 + index), 2000m + index * 10m))
+            .Select(index => CurrentSample(now.AddMinutes(-200 + index * 9), 2000m + index * 10m))
             .ToArray();
         var allSamples = oldSamples.Concat(recentSamples).ToArray();
         var options = new RegressionOptions
@@ -877,17 +1026,17 @@ internal static class Program
         var estimateLabel = FindControls<Label>(form)
             .Single(label => label.Name == "RegressionEstimateLabel");
         var chart = FindControls<QuotaChartControl>(form).Single();
-        Equal(21, chart.CurrentContributions.Count, "默认 30 天图表应接收 21 个贡献样本");
+        Equal(21, chart.CurrentContributions.Count, "默认 4 小时图表应接收 21 个贡献样本");
         Equal(
             true,
             estimateCard.AccessibleName!.Contains(UiText.Format("DashboardEstimateCaption", 21), StringComparison.Ordinal),
-            "默认 30 天额度卡应显示 21 个当前估值贡献样本");
+            "默认 4 小时额度卡应显示 21 个当前估值贡献样本");
         Equal(
             true,
             estimateLabel.Text.Contains(
                 UiText.Format("EstimateWithPoints", recentAnalysis.CurrentEstimate!.Value, 21),
                 StringComparison.Ordinal),
-            "默认 30 天横幅应显示同一金额和 21 个贡献样本");
+            "默认 4 小时横幅应显示同一金额和 21 个贡献样本");
 
         using (var renderedChart = new QuotaChartControl { Size = new Size(900, 360) })
         using (var bitmap = new Bitmap(renderedChart.Size.Width, renderedChart.Size.Height))
@@ -915,6 +1064,8 @@ internal static class Program
 
         var range = FindControls<ComboBox>(form)
             .Single(comboBox => comboBox.Name == "HistoryRangeComboBox");
+        SelectTimeRange(range, "TimeRange30Days");
+        Equal(21, chart.CurrentContributions.Count, "显式选择30天仍按所选范围计算");
         range.SelectedIndex = 0;
         Equal(allSamples.Length, chart.CurrentContributions.Count, "切换全部后图表贡献样本数应同步扩大");
         Equal(
@@ -1197,6 +1348,7 @@ internal static class Program
         var state = new MonitorState { Samples = previous.Samples.ToList(), HistoricalReplayPricingVersion = previous.PricingVersion };
         type.GetField("_state", flags)!.SetValue(coordinator, state);
         type.GetField("_pricingCatalog", flags)!.SetValue(coordinator, catalog);
+        type.GetField("_curveCache", flags)!.SetValue(coordinator, new RegressionCurveCache());
         type.GetField("<Settings>k__BackingField", flags)!.SetValue(coordinator, new AppSettings());
         var build = type.GetMethod("BuildView", flags)!;
         var restarted = (MonitorViewSnapshot)build.Invoke(coordinator, ["waiting"] )!;
@@ -1295,7 +1447,10 @@ internal static class Program
         Equal(5d, state.Samples[0].DurationSeconds, "首个响应耗时五秒");
         Equal(10d, state.Samples[1].DurationSeconds, "第二次响应必须排除九十五秒工具等待");
         Equal("fast", state.Samples[1].ServiceTier, "保留日志明确的 Fast 层级");
-        state = JsonSerializer.Deserialize<SpeedState>(JsonSerializer.Serialize(state))!;
+          state = JsonSerializer.Deserialize<SpeedState>(JsonSerializer.Serialize(state))!;
+          // 已消费到末尾的文件即使暂时被独占，也无需重新打开；既有响应必须完整保留。
+          using (var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+              Equal(2, SpeedMonitoring.Scan(state, [root], time.AddHours(1), 24).Samples.Count, "未变化日志无需重新打开");
         Equal(2, SpeedMonitoring.Scan(state, [root], time.AddHours(1), 24).Samples.Count, "重启后不重复既有样本");
         File.AppendAllText(path, ResponseItemLine(time.AddSeconds(120)) + "\n" +
             TokenCountLine(time.AddSeconds(121), 1000, 500, 0, 90, 0));
@@ -1311,8 +1466,8 @@ internal static class Program
         Equal(true, cancelled, "取消应显式报告，不返回伪成功空记录");
     }
 
-    /// <summary>验证速度参数序列化后保留，速度页可在高缩放下访问，且明确显示无 TTFT 证据。</summary>
-    private static void TestSpeedPanelAndSettings()
+    /// <summary>验证高缩放下按模型和模式筛选，卡片/图表/表格同步，未知不混入 Standard，刷新保留选择。</summary>
+    private static void TestSpeedPanelAndSettings(string? output = null)
     {
         var settings = new AppSettings { Speed = new SpeedOptions { Mode = SpeedAggregationMode.ResponseCount, ResponsesPerBucket = 7 } };
         var loaded = JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(settings))!;
@@ -1324,24 +1479,53 @@ internal static class Program
             new(time.AddMinutes(-5), time, "gpt-6-astra", "fast", 7, 700, 400, 10, true),
             new(time.AddMinutes(-10), time.AddMinutes(-5), "gpt-6-astra", "fast", 7, 600, 300, 10, true),
             new(time.AddMinutes(-5), time, "gpt-6-astra", "standard", 7, 300, 200, 10, true),
+            new(time.AddMinutes(-5), time, "gpt-6-astra", "unknown", 7, 300, 200, 10, true),
             new(time.AddMinutes(-5), time, "gpt-5.6-sol", "standard", 7, 200, 100, 10, true)
         ];
         var view = CreateDashboardPreviewView() with { SpeedSamples = buckets.SelectMany(bucket => Enumerable.Range(0, 7)
             .Select(i => new SpeedSample($"source-{bucket.Model}-{bucket.ServiceTier}", bucket.End.AddSeconds(-14 + i),
-                bucket.End.AddSeconds(-7 + i), bucket.Model, bucket.ServiceTier, 100, 30))).ToArray(), SpeedSampleCount = 28 };
+                bucket.End.AddSeconds(-7 + i), bucket.Model, bucket.ServiceTier,
+                bucket.ServiceTier == "fast" ? 140 : bucket.ServiceTier == "standard" ? 70 : 700, 30))).ToArray(), SpeedSampleCount = 35 };
         form.UpdateView(view, settings.Regression); form.ShowSpeedTab();
         form.Scale(new SizeF(1.5F, 1.5F)); Application.DoEvents();
         Equal(DashboardSection.Speed, form.SelectedSection, "速度页入口可达");
         var panel = FindControls<SpeedPanel>(form).Single();
-        Equal(4, FindControls<DataGridView>(panel).Single().Rows.Count, "速度页显示每组聚合结果");
+        Equal(5, FindControls<DataGridView>(panel).Single().Rows.Count, "速度页显示每组聚合结果");
         var chart = FindControls<SpeedChartControl>(panel).Single();
-        Equal(3, chart.DisplayedSeriesCount, "不同模型和层级应独立绘制三条线");
+        Equal(4, chart.DisplayedSeriesCount, "不同模型和层级应独立绘制四条线");
         FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedModelFilter").SelectedItem = "gpt-6-astra";
-        Equal(2, chart.DisplayedSeriesCount, "筛选 Astra 后只保留它的两种速度层级");
-        Equal(3, FindControls<DataGridView>(panel).Single().Rows.Count, "明细必须与图表使用相同模型筛选");
+        Equal(3, chart.DisplayedSeriesCount, "筛选 Astra 后保留标准、加速和未知");
+        var tier = FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedTierFilter");
+        var grid = FindControls<DataGridView>(panel).Single();
+        tier.SelectedIndex = 1;
+        Equal(1, chart.DisplayedSeriesCount, "Standard 筛选排除 Fast 与未知曲线");
+        Equal(1, grid.Rows.Count, "Standard 表格与图表同步");
+        Equal(true, FindControls<MetricCard>(panel).Any(card => card.AccessibleName!.StartsWith(UiText.Get("SpeedTotalTps") + ": " + 10d.ToString("N2"))), "Standard 卡片不得混入 Fast 或未知 TPS");
+        tier.SelectedIndex = 2;
+        Equal(2, grid.Rows.Count, "Fast 保留两组响应");
+        Equal(true, FindControls<MetricCard>(panel).Any(card => card.AccessibleName!.StartsWith(UiText.Get("SpeedTotalTps") + ": " + 20d.ToString("N2"))), "Fast 卡片只计算 Fast 响应");
+        form.UpdateView(view, settings.Regression);
+        Equal(2, tier.SelectedIndex, "后台刷新保留 Fast 选择");
+        tier.SelectedIndex = 3;
+        Equal(1, grid.Rows.Count, "未知单独可查");
+        Equal(true, FindControls<MetricCard>(panel).Any(card => card.AccessibleName!.StartsWith(UiText.Get("SpeedTotalTps") + ": " + 100d.ToString("N2"))), "未知不得显示标准速度");
+        FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedModelFilter").SelectedItem = "gpt-5.6-sol";
+        Equal(0, grid.Rows.Count, "模型与模式无交集时显示空表，不回退混合数据");
+        Equal(0, chart.DisplayedSeriesCount, "空筛选不显示上一组曲线");
+        FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedModelFilter").SelectedItem = "gpt-6-astra";
+        tier.SelectedIndex = 0;
         FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedMetric").SelectedIndex = 1;
-        Equal(2, chart.DisplayedSeriesCount, "切换可见输出 TPS 不改变模型分组");
+        Equal(3, chart.DisplayedSeriesCount, "切换可见输出 TPS 不改变模型/模式分组");
         Equal(true, FindControls<Label>(panel).Any(label => label.Text.Contains("TTFT：不可用")), "不得把代理耗时伪装成 TTFT");
+        if (output is not null)
+        {
+            FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedModelFilter").SelectedIndex = 0;
+            form.ClientSize = new Size(1260, 860); Application.DoEvents(); form.Refresh(); Application.DoEvents();
+            Equal(true, chart.Height >= 180, "150% 布局仍须保留可用绘图区");
+            using var bitmap = new Bitmap(form.Width, form.Height);
+            form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+            bitmap.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+        }
         form.Hide();
     }
 
@@ -1354,7 +1538,7 @@ internal static class Program
         var view = CreateDashboardPreviewView() with { Samples = points };
         using var form = new ChartForm(new AppSettings { Regression = options }, _ => { });
         form.UpdateView(view, options);
-        FindControls<ComboBox>(form).Single(box => box.Name == "HistoryRangeComboBox").SelectedIndex = 4;
+        SelectTimeRange(FindControls<ComboBox>(form).Single(box => box.Name == "HistoryRangeComboBox"), "TimeRangeCustom");
         var quotaWindow = FindControls<CustomTimeWindowControl>(form).Single();
         FindControls<DateTimePicker>(quotaWindow).Single(p => p.Name == "WindowStart").Value = now.AddDays(-9).AddSeconds(-1).LocalDateTime;
         FindControls<DateTimePicker>(quotaWindow).Single(p => p.Name == "WindowEnd").Value = now.AddDays(-7).AddSeconds(1).LocalDateTime;
@@ -1388,7 +1572,7 @@ internal static class Program
         panel.UpdateView(view with { SpeedSamples = responses, SpeedSampleCount = 5 }, new SpeedOptions());
         DateTimeOffset? requested = null;
         panel.HistoryRequested += value => requested = value;
-        FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedRange").SelectedIndex = 4;
+        SelectTimeRange(FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedRange"), "TimeRangeCustom");
         var speedWindow = FindControls<CustomTimeWindowControl>(panel).Single();
         FindControls<DateTimePicker>(speedWindow).Single(p => p.Name == "WindowStart").Value = start.AddSeconds(-1).LocalDateTime;
         FindControls<DateTimePicker>(speedWindow).Single(p => p.Name == "WindowEnd").Value = end.AddSeconds(1).LocalDateTime;
@@ -1398,7 +1582,7 @@ internal static class Program
         Equal(3, FindControls<DataGridView>(panel).Single().Rows.Cast<DataGridViewRow>().Sum(row => Convert.ToInt32(row.Cells[4].Value)), "明细与指标卡一致");
     }
 
-    /// <summary>通过实际鼠标事件验证缩放锚点、平移、空窗口复位及两页统计同步，而不是只检查数学接口。</summary>
+    /// <summary>通过鼠标事件验证缩放和平移仅改变图表统计，表格仍保留所选范围及模型筛选。</summary>
     private static void TestInteractiveChartWindows()
     {
         var now = DateTimeOffset.Now;
@@ -1421,7 +1605,7 @@ internal static class Program
         var expected = points.Count(point => point.Timestamp >= zoomed.Start && point.Timestamp <= zoomed.End);
         Equal(true, expected > 0 && expected < points.Length, "缩放场景应筛掉部分样本");
         Equal(expected, chart.CurrentContributions.Count, "缩放后额度回归贡献必须重算");
-        Equal(expected, FindControls<DataGridView>(form).Single().Rows.Count, "额度表格与可见窗口一致");
+        Equal(points.Length, FindControls<DataGridView>(form).Single().Rows.Count, "额度表格不被缩放裁剪");
         var expectedZoom = ChartTimeNavigation.Zoom(initial, (x - 76d) / (chart.Width - 104), Math.Pow(1.2, -4));
         Equal(true, Math.Abs((expectedZoom.Start - zoomed.Start).TotalMilliseconds) <= 1, "鼠标锚点须用于时间缩放");
         RenderInteractiveChart(chart);
@@ -1433,10 +1617,11 @@ internal static class Program
         Equal(points.Count(point => point.Timestamp >= panned.Start && point.Timestamp <= panned.End), chart.CurrentContributions.Count, "平移后回归与窗口一致");
         SendChartMouse(chart, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, x, 60, 0));
         SendChartMouse(chart, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, x + chart.Width * 20, 60, 0));
-        Equal(0, chart.CurrentContributions.Count, "平移到无数据区不得保留旧估值");
+        Equal(true, chart.Navigation.Window!.Value.Start >= points[0].Timestamp, "向过去拖动不得越过已有采样边界");
+        Equal(true, chart.CurrentContributions.Count > 0, "整窗拖出历史数据时应停在边界");
         RenderInteractiveChart(chart);
         SendChartMouse(chart, "OnMouseDoubleClick", new MouseEventArgs(MouseButtons.Left, 2, x, 60, 0));
-        Equal(10, chart.CurrentContributions.Count, "空窗口仍可双击恢复初始全部范围");
+        Equal(10, chart.CurrentContributions.Count, "边界处仍可双击恢复初始全部范围");
 
         form.ShowSpeedTab();
         var panel = FindControls<SpeedPanel>(form).Single();
@@ -1448,11 +1633,142 @@ internal static class Program
         var speedWindow = speedChart.Navigation.Window!.Value;
         var visibleResponses = speed.Where(sample => sample.EndedAt >= speedWindow.Start && sample.EndedAt <= speedWindow.End).ToArray();
         Equal(true, visibleResponses.Length > 0 && visibleResponses.Length < 10, "速度图实际缩放而不是仅放大外观");
-        Equal(visibleResponses.Length, FindControls<DataGridView>(panel).Single().Rows.Count, "速度按新窗口重新分组");
+        Equal(speed.Length, FindControls<DataGridView>(panel).Single().Rows.Count, "速度表格保持下拉范围");
         FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedModelFilter").SelectedItem = "gpt-6-astra";
         Equal(speedWindow, speedChart.Navigation.Window!.Value, "模型切换不得重置用户缩放");
-        Equal(visibleResponses.Count(sample => sample.Model == "gpt-6-astra"), FindControls<DataGridView>(panel).Single().Rows.Count, "模型筛选和时间缩放同时生效");
+        Equal(speed.Count(sample => sample.Model == "gpt-6-astra"), FindControls<DataGridView>(panel).Single().Rows.Count, "速度表格模型筛选仍生效，不被视野裁剪");
         Equal(TimeSpan.FromSeconds(1), ChartTimeNavigation.Zoom(initial, .5, 1e-20).End - ChartTimeNavigation.Zoom(initial, .5, 1e-20).Start, "极限放大仍保留一秒有效窗口");
+        form.Hide();
+    }
+
+    /// <summary>验证独立表格持续接收新点、4小时和监控日过滤正确，配置能跨保存与旧设置迁移保留。</summary>
+    private static void TestIndependentTableRangesAndDayStart(string? output = null)
+    {
+        var now = DateTimeOffset.Now;
+        var date = new DateTimeOffset(now.LocalDateTime.Date);
+        Equal(date, ChartTimeWindow.CurrentDay(date.AddHours(6), 0).Start, "默认监控日从本地零点开始");
+        Equal(date.AddDays(-1).AddHours(8), ChartTimeWindow.CurrentDay(date.AddHours(6), 480).Start,
+            "未到08点应沿用昨天08点");
+        Equal(date.AddHours(8), ChartTimeWindow.CurrentDay(date.AddHours(8), 480).Start, "到达起点时开始新监控日");
+        Equal(true, new AppSettings { DayStartMinutes = 1440 }.Validate().Count > 0, "无效日起点必须拒绝保存");
+        var old = JsonSerializer.Deserialize<AppSettings>("{\"SettingsSchemaVersion\":9}")!;
+        Equal(true, AppSettingsMigration.Apply(old), "旧设置应迁移并保存新结构");
+        Equal(0, old.DayStartMinutes, "旧设置保持零点默认");
+        Equal(false, AppSettingsMigration.Apply(old), "日起点迁移必须幂等");
+
+        var points = Enumerable.Range(0, 10).Select(i => CurrentSample(now.AddHours(-9.5 + i), 1000 + i * 100)
+            with { UsedPercent = 10 + i }).ToArray();
+        var speed = points.Select((point, i) => new SpeedSample($"range-{i}", point.Timestamp.AddSeconds(-10),
+            point.Timestamp, "gpt-6-astra", "standard", 100, 20)).ToArray();
+        var settings = new AppSettings { Regression = new RegressionOptions { Mode = RegressionMode.Linear },
+            Speed = new SpeedOptions { Mode = SpeedAggregationMode.ResponseCount, ResponsesPerBucket = 1 } };
+        AppSettings? saved = null;
+        using var form = new ChartForm(settings, value => saved = value);
+        var view = CreateDashboardPreviewView() with { Samples = points, SpeedSamples = speed, SpeedHistoryHours = 24 };
+        form.UpdateView(view, settings.Regression); form.ShowDashboardTab(); Application.DoEvents();
+        var range = FindControls<ComboBox>(form).Single(box => box.Name == "HistoryRangeComboBox");
+        var chart = FindControls<QuotaChartControl>(form).Single();
+        var grid = FindControls<DataGridView>(form).Single();
+        SelectTimeRange(range, "TimeRangeAll"); RenderInteractiveChart(chart);
+        var x = 76 + (chart.Width - 104) / 2;
+        SendChartMouse(chart, "OnMouseWheel", new HandledMouseEventArgs(MouseButtons.None, 0, x, 60, 480));
+        var zoomed = chart.Navigation.Window!.Value;
+        var latest = CurrentSample(now, 2100) with { UsedPercent = 36 };
+        view = view with { Samples = points.Append(latest).ToArray() };
+        form.UpdateView(view, settings.Regression);
+        Equal(zoomed, chart.Navigation.Window!.Value, "新采样不重置用户视野");
+        Equal(11, grid.Rows.Count, "缩放后新点仍进入完整表格");
+        Equal(36m, Convert.ToDecimal(grid.Rows[0].Cells[1].Value), "表格最新点不可停在旧视野截止");
+        Equal(true, FindControls<Label>(form).Single(label => label.Name == "HistorySummaryLabel").Text.Contains(36m.ToString("N2", UiText.Culture) + "%"),
+            "最新采样摘要应显示视野外的新点");
+        if (output is not null)
+        {
+            Application.DoEvents();
+            using var bitmap = new Bitmap(form.Width, form.Height);
+            form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+            bitmap.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+        }
+        SelectTimeRange(range, "TimeRange4Hours");
+        Equal(5, grid.Rows.Count, "最近4小时按当前时间过滤完整表格");
+        Equal(5, chart.CurrentContributions.Count, "最近4小时初始图表不带进更早样本");
+        form.UpdateView(view with { Samples = points.Take(2).ToArray() }, settings.Regression);
+        Equal(0, grid.Rows.Count, "最近4小时没有数据时表格应为空");
+        Equal(0, chart.CurrentContributions.Count, "空快捷范围不能平移带入旧采样点");
+        form.UpdateView(view, settings.Regression);
+        var localStart = now.LocalDateTime.AddHours(-2);
+        settings.DayStartMinutes = localStart.Hour * 60 + localStart.Minute;
+        form.UpdateView(view, settings.Regression);
+        SelectTimeRange(range, "TimeRangeToday");
+        var dayStart = ChartTimeWindow.CurrentDay(DateTimeOffset.Now, settings.DayStartMinutes).Start;
+        Equal(view.Samples.Count(p => p.Timestamp >= dayStart), grid.Rows.Count, "额度当天选项遵守共享起点");
+        UiText.SetLanguage(UiLanguage.English); form.ApplyPreferences(settings);
+        Equal(UiText.Get("TimeRangeToday"), range.Text, "语言切换保留当天选项");
+        UiText.SetLanguage(UiLanguage.ChineseSimplified); form.ApplyPreferences(settings);
+
+        form.ShowSpeedTab(); Application.DoEvents();
+        var panel = FindControls<SpeedPanel>(form).Single();
+        var speedRange = FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedRange");
+        var speedGrid = FindControls<DataGridView>(panel).Single();
+        SelectTimeRange(speedRange, "TimeRange4Hours");
+        Equal(4, speedGrid.Rows.Count, "速度最近4小时仅保留范围内响应");
+        panel.UpdateView(view with { SpeedSamples = speed.Take(2).ToArray() }, settings.Speed, settings.DayStartMinutes);
+        Equal(0, speedGrid.Rows.Count, "空速度快捷范围不回退到旧响应");
+        panel.UpdateView(view, settings.Speed, settings.DayStartMinutes);
+        SelectTimeRange(speedRange, "TimeRangeToday");
+        Equal(speed.Count(p => p.EndedAt >= dayStart), speedGrid.Rows.Count, "速度当天与额度使用相同监控日起点");
+        form.ShowSettingsTab(settings);
+        var picker = FindControls<DateTimePicker>(form).Single(control => control.Name == "DayStartTime");
+        picker.Value = DateTime.Today.AddHours(8).AddMinutes(15);
+        FindControls<Button>(FindControls<SettingsPanel>(form).Single()).Single(button => button.Text == UiText.Get("SaveApply")).PerformClick();
+        Equal(495, saved!.DayStartMinutes, "设置菜单应保存08:15而非重置零点");
+        Equal(495, JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(saved))!.DayStartMinutes,
+            "监控日起点跨重启持久化");
+        form.Hide();
+    }
+
+    /// <summary>验证导航不能制造未来空白，采样点全部移出内部间隙时仍绘制参考拟合而不伪造估值。</summary>
+    private static void TestChartBoundsAndReferenceCurve()
+    {
+        var now = DateTimeOffset.Now.AddMinutes(-10).AddTicks(1234);
+        using var owner = new Control();
+        using var navigation = new ChartTimeNavigation(owner);
+        navigation.SetDataBounds(now.AddHours(-10), now);
+        var bounded = navigation.SetWindow(now.AddHours(-2), now.AddHours(20));
+        Equal(now, bounded.End, "窗口右边界必须精确停在最后一个采样点，不能向未来留白");
+        Equal(now.AddHours(-10), bounded.Start, "超过全历史的跨度应限制为已有数据范围");
+        navigation.SetDataBounds(now, now);
+        Equal(now, navigation.SetWindow(now, now.AddDays(1)).End, "单点仍不可向未来扩展");
+
+        var settings = new AppSettings { Regression = new RegressionOptions { Mode = RegressionMode.Linear, LinearLookbackPoints = 100 } };
+        var points = new[] { CurrentSample(now.AddHours(-10), 1000), CurrentSample(now, 2000) };
+        var projected = RegressionCalculator.ProjectToWindow(RegressionCalculator.Analyze(points, settings.Regression).Curve,
+            now.AddHours(-6), now.AddHours(-4));
+        Equal(1400m, projected[0].Value, "视口起点按拟合段插值，而不是删除两端的整条线");
+        Equal(1600m, projected[^1].Value, "视口终点保持拟合连续");
+        using var form = new ChartForm(settings, _ => { });
+        form.UpdateView(CreateDashboardPreviewView() with { Samples = points }, settings.Regression);
+        form.ShowDashboardTab();
+        SelectTimeRange(FindControls<ComboBox>(form).Single(box => box.Name == "HistoryRangeComboBox"), "TimeRangeCustom");
+        var window = FindControls<CustomTimeWindowControl>(form).Single();
+        FindControls<DateTimePicker>(window).Single(p => p.Name == "WindowStart").Value = now.AddHours(-6).LocalDateTime;
+        FindControls<DateTimePicker>(window).Single(p => p.Name == "WindowEnd").Value = now.AddHours(-4).LocalDateTime;
+        window.ApplyWindow(); Application.DoEvents();
+        var chart = FindControls<QuotaChartControl>(form).Single();
+        Equal(0, chart.CurrentContributions.Count, "没有可见采样时参考线不得伪造贡献点");
+        Equal(0, FindControls<DataGridView>(form).Single().Rows.Count, "参考线不得新增表格样本");
+        Equal(true, FindControls<Label>(form).Any(label => label.Text.Contains(UiText.Get("ChartReferenceOnly"))), "参考口径必须显式标注");
+        using var bitmap = new Bitmap(chart.Width, chart.Height);
+        chart.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+        var centerX = 76 + (chart.Width - 104) / 2;
+        var centerY = 30 + (chart.Height - 94) / 2;
+        var linePixels = 0;
+        for (var x = centerX - 12; x <= centerX + 12; x++)
+        for (var y = centerY - 12; y <= centerY + 12; y++)
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            if (pixel.R < 50 && pixel.G > 100 && pixel.B > 170) linePixels++;
+        }
+        Equal(true, linePixels > 10, "无采样的内部间隙仍须实际画出穿过视口的拟合线");
         form.Hide();
     }
 
@@ -1462,6 +1778,10 @@ internal static class Program
         using var bitmap = new Bitmap(chart.Width, chart.Height);
         chart.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
     }
+
+    /// <summary>按用户可见的本地化范围选择操作控件，避免新增选项后依赖固定序号。</summary>
+    private static void SelectTimeRange(ComboBox control, string key) =>
+        control.SelectedItem = control.Items.Cast<object>().Single(item => item.ToString() == UiText.Get(key));
 
     /// <summary>向控件派发与 Windows 同形的鼠标事件，覆盖导航订阅和业务页面重算链路。</summary>
     private static void SendChartMouse(Control chart, string method, MouseEventArgs args) =>
@@ -1678,13 +1998,13 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证 Auto-review rollout 使用 GPT-5.6 Luna Standard 代理价格，并能形成有效周额度样本。
+    /// 验证公告前 Auto-review 保留 GPT-5.6 Luna 代理价格，并能形成有效周额度样本。
     /// </summary>
     private static void TestAutoReviewUsesLunaPricingEndToEnd()
     {
         var directory = CreateTemporaryDirectory();
         var path = Path.Combine(directory, "rollout-auto-review.jsonl");
-        var timestamp = DateTimeOffset.UtcNow;
+        var timestamp = PublicApiPricing.AutoReviewFreeFrom.AddDays(-1);
         File.WriteAllLines(path,
         [
             TurnContextLine(timestamp, "codex-auto-review", "standard"),
@@ -2390,7 +2710,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证整份文件完全没有层级证据时，历史读取仍保留 unknown 并拒绝猜测 Standard。
+    /// 验证可计费模型完全没有层级证据时，历史读取仍保留 unknown 并拒绝猜测 Standard。
     /// </summary>
     private static void TestHistoricalFactsWithoutTierRemainUnpriced()
     {
@@ -2399,7 +2719,7 @@ internal static class Program
         var timestamp = DateTimeOffset.UtcNow;
         File.WriteAllLines(path,
         [
-            TurnContextWithoutTierLine(timestamp, "codex-auto-review"),
+            TurnContextWithoutTierLine(timestamp, "gpt-5.6-luna"),
             ResponseItemLine(timestamp.AddSeconds(1)),
             TokenCountLine(timestamp.AddSeconds(2), 20_000, 5_000, 0, 200, 100)
         ]);

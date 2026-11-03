@@ -362,7 +362,7 @@ public static class HistoricalReplayCalculator
     }
 
     /// <summary>
-    /// 将一个完整可定价的历史区间聚合成与实时采样结构一致的双口径样本。
+    /// 聚合基础可定价的历史区间；对比必须整段都有价格才可用，不能因缺少对比价格丢掉基础样本。
     /// </summary>
     /// <param name="snapshot">提供额度桶标识的当前权威快照。</param>
     /// <param name="checkpoint">区间结束的百分比观察点。</param>
@@ -379,7 +379,8 @@ public static class HistoricalReplayCalculator
     {
         var usage = responses.Aggregate(TokenUsage.Zero, (total, response) => total.Add(response.Usage));
         var cost = responses.Sum(response => response.ApiEquivalentUsd);
-        var officialLongContextCost = responses.Sum(response => response.OfficialLongContextApiEquivalentUsd);
+        var officialAvailable = responses.All(response => response.OfficialLongContextAvailable);
+        var officialLongContextCost = officialAvailable ? responses.Sum(response => response.OfficialLongContextApiEquivalentUsd) : 0;
         var models = responses.Select(response => response.Model)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(model => model, StringComparer.OrdinalIgnoreCase);
@@ -406,13 +407,17 @@ public static class HistoricalReplayCalculator
             AmountDefinition = PublicApiPricing.AmountDefinition,
             OfficialLongContextIntervalApiEquivalentUsd = officialLongContextCost,
             OfficialLongContextEstimatedWeeklyQuotaUsd = officialLongContextCost * 100m / deltaPercent,
+            OfficialLongContextAvailable = officialAvailable,
+            OfficialLongContextIssue = string.Join("；", responses.Where(response => !response.OfficialLongContextAvailable)
+                .Select(response => response.OfficialLongContextIssue).Distinct()),
             OfficialLongContextAmountDefinition = PublicApiPricing.OfficialLongContextAmountDefinition,
             PricingVersion = pricingVersion,
             ServiceTiers = string.Join(", ", tiers),
             CreditMultipliers = string.Join(", ", multipliers),
             SampleSource = HistoricalSampleSource,
             PricingUsages = responses.Select(response =>
-                new ResponsePricingUsage(response.Model, response.ServiceTier, response.Usage)).ToArray()
+                new ResponsePricingUsage(response.Model, response.ServiceTier, response.Usage)
+                { Timestamp = response.Timestamp }).ToArray()
         };
     }
 

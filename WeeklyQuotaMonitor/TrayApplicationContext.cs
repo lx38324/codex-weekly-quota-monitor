@@ -8,6 +8,7 @@ namespace WeeklyQuotaMonitor;
 public sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly MonitorCoordinator _coordinator;
+    private readonly TelemetryService _telemetry;
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _menu;
     private readonly DetailForm _detailForm;
@@ -28,10 +29,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     public TrayApplicationContext(SynchronizationContext uiContext)
     {
         _coordinator = new MonitorCoordinator(uiContext);
+        _telemetry = new TelemetryService(Path.Combine(AppPaths.DataDirectory, "telemetry.sqlite"));
         UiText.SetLanguage(_coordinator.Settings.Language);
         AppTheme.Set(_coordinator.Settings.Theme);
         _detailForm = new DetailForm();
-        _chartForm = new ChartForm(_coordinator.Settings, ApplySettings);
+        _chartForm = new ChartForm(_coordinator.Settings, ApplySettings, _telemetry);
         _chartForm.SpeedHistoryRequested += _coordinator.RequestSpeedHistory;
         _menu = BuildMenu();
         _currentIcon = IconFactory.Create(null);
@@ -52,7 +54,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// <summary>
     /// 启动后台协调器并完成第一次额度查询。
     /// </summary>
-    public Task StartAsync() => _coordinator.StartAsync();
+    public async Task StartAsync()
+    {
+        await _telemetry.ConfigureAsync(_coordinator.Settings.Telemetry);
+        await _coordinator.StartAsync();
+    }
 
     /// <summary>
     /// 判断托盘鼠标动作是否应打开完整图表窗；仅左键双击或更多连续点击满足条件。
@@ -135,15 +141,31 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// 保存协调器设置，立即同步语言和主题，并主动查询一次额度以应用新价格和触发历史重算。
     /// </summary>
     /// <param name="settings">设置页提交的完整配置。</param>
-    private async void ApplySettings(AppSettings settings)
+    private void ApplySettings(AppSettings settings)
     {
+        _coordinator.ApplySettings(settings);
         UiText.SetLanguage(settings.Language);
         AppTheme.Set(settings.Theme);
-        _coordinator.ApplySettings(settings);
         _chartForm.ApplyPreferences(settings);
         ApplyLocalization();
         UpdateView(_coordinator.CurrentView);
-        await _coordinator.RefreshNowAsync();
+        RefreshSettingsAsync(settings);
+    }
+
+    /// <summary>设置同步保存成功后刷新采集器；已知外部失败显式通知，不把异步异常丢给消息循环。</summary>
+    private async void RefreshSettingsAsync(AppSettings settings)
+    {
+        try
+        {
+            await _coordinator.PersistSettingsStateAsync();
+            await _telemetry.ConfigureAsync(settings.Telemetry);
+            await _coordinator.RefreshNowAsync();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            RuntimeLog.Write(exception.ToString());
+            MessageBox.Show(UiText.Get("StartupApplyFailed") + "\n" + exception.Message, "Codex Weekly Quota Monitor");
+        }
     }
 
     /// <summary>
@@ -162,6 +184,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// </summary>
     private void UpdateView(MonitorViewSnapshot view)
     {
+        _telemetry.UpdateSpeedSamples(view.SpeedSamples);
         _detailForm.UpdateView(view, _coordinator.Settings.EnableOfficialLongContextEstimate);
         _chartForm.UpdateView(view, _coordinator.Settings.Regression);
         _notifyIcon.Text = BuildTooltip(view, _coordinator.Settings.EnableOfficialLongContextEstimate);
@@ -186,7 +209,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// <summary>
     /// 在统一主窗口中直达总览标签页。
     /// </summary>
-    private void ShowDashboard()
+    public void ShowDashboard()
     {
         _chartForm.UpdateView(_coordinator.CurrentView, _coordinator.Settings.Regression);
         _chartForm.ShowDashboardTab();
@@ -254,6 +277,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private async Task ExitAsync()
     {
         _notifyIcon.Visible = false;
+        await _telemetry.DisposeAsync();
         await _coordinator.DisposeAsync();
         _detailForm.Dispose();
         _chartForm.Dispose();

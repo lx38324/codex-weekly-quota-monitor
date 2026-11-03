@@ -116,7 +116,7 @@ public sealed class QuotaChartControl : Control
         e.Graphics.DrawLine(axisPen, plot.Left, plot.Bottom, plot.Right, plot.Bottom);
         e.Graphics.DrawLine(axisPen, plot.Left, plot.Top, plot.Left, plot.Bottom);
 
-        if (_samples.Count == 0)
+        if (_samples.Count == 0 && _baseCurve.Count == 0 && _officialLongContextCurve.Count == 0)
         {
             if (Navigation.Window is { } emptyWindow)
                 DrawGridAndLabels(e.Graphics, plot, emptyWindow.Start, emptyWindow.End, 0, 1, scale);
@@ -136,6 +136,7 @@ public sealed class QuotaChartControl : Control
             .Select(sample => new CurvePoint(sample.Timestamp, sample.EstimatedWeeklyQuotaUsd))
             .ToArray();
         var officialLongRaw = _samples
+            .Where(sample => sample.OfficialLongContextAvailable)
             .OrderBy(sample => sample.Timestamp)
             .Select(sample => new CurvePoint(sample.Timestamp, sample.OfficialLongContextEstimatedWeeklyQuotaUsd))
             .ToArray();

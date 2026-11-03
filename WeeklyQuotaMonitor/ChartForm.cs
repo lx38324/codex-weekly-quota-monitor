@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using WeeklyQuotaMonitor.Core;
 
 namespace WeeklyQuotaMonitor;
@@ -18,6 +19,14 @@ public enum DashboardSection
 /// </summary>
 public sealed class ChartForm : Form
 {
+    // SW_SHOW 不更改窗口的正常/最大化状态；显式覆盖启动器传入的 SW_HIDE。
+    private const int ShowNativeWindow = 5;
+
+    /// <summary>同步原生窗口可见状态，避免隐藏启动参数使 WinForms 的 Visible 与实际显示脱节。</summary>
+    [DllImport("user32.dll", EntryPoint = "ShowWindow")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowNative(IntPtr window, int command);
+
     private const string LiveSampleSource = "live";
     private readonly ApplicationSidebar _sidebar = new();
     private readonly Panel _contentHost = new() { Dock = DockStyle.Fill };
@@ -31,6 +40,12 @@ public sealed class ChartForm : Form
     private readonly Panel _diagnosticsPage = new() { Dock = DockStyle.Fill, Padding = new Padding(12) };
     private readonly Panel _speedPage = new() { Dock = DockStyle.Fill };
     private SpeedPanel? _speedPanel;
+    private TelemetryPanel? _telemetryPanel;
+    private readonly RegressionCurveCache _viewportAnalysis = new();
+    private readonly RegressionCurveCache _referenceAnalysis = new();
+    private QuotaSample[] _tableSamples = [];
+    private string? _tableLanguage;
+    private readonly TelemetryService? _telemetry;
     private readonly MetricCard _baseEstimateCard = new(MetricCardTone.Primary, MetricCardStyle.Hero);
     private readonly MetricCard _usedCard = new(MetricCardTone.Warning);
     private readonly MetricCard _remainingCard = new(MetricCardTone.Positive);
@@ -78,8 +93,9 @@ public sealed class ChartForm : Form
     /// </summary>
     /// <param name="settings">当前已生效设置。</param>
     /// <param name="applySettings">保存设置后立即应用的回调。</param>
-    public ChartForm(AppSettings settings, Action<AppSettings> applySettings)
+    public ChartForm(AppSettings settings, Action<AppSettings> applySettings, TelemetryService? telemetry = null)
     {
+        _telemetry = telemetry;
         _settings = settings;
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleDimensions = new SizeF(96F, 96F);
@@ -286,7 +302,7 @@ public sealed class ChartForm : Form
     }
 
     /// <summary>
-    /// 绑定历史时间范围选择事件，首次打开时默认显示最近 30 天。
+    /// 绑定历史时间范围选择事件，所有数据页首次打开统一为最近 4 小时。
     /// </summary>
     private void ConfigureTimeRange()
     {
@@ -299,7 +315,7 @@ public sealed class ChartForm : Form
         _customWindow.WindowApplied += () => { _interactiveWindow = null; RefreshHistoryPage(); };
         _chart.Navigation.WindowChanged += window => { _interactiveWindow = window; RefreshHistoryPage(); };
         _chart.Navigation.ResetRequested += () => { _interactiveWindow = null; RefreshHistoryPage(); };
-        BindTimeRanges(HistoryRange.Days30);
+        BindTimeRanges(HistoryRange.Hours4);
     }
 
     /// <summary>
@@ -342,6 +358,7 @@ public sealed class ChartForm : Form
     public void ApplyPreferences(AppSettings settings)
     {
         _settings = settings;
+        _telemetryPanel?.UpdateDayStart(settings.DayStartMinutes);
         _settingsPanel.LoadSettings(settings);
         ApplyLocalization();
         AppTheme.Apply(this);
@@ -400,8 +417,8 @@ public sealed class ChartForm : Form
     /// </summary>
     public void ShowDashboardTab()
     {
-        ShowWindow();
         SelectSection(DashboardSection.Dashboard);
+        ShowWindow();
     }
 
     /// <summary>
@@ -419,8 +436,8 @@ public sealed class ChartForm : Form
     public void ShowSettingsTab(AppSettings settings)
     {
         _settingsPanel.LoadSettings(settings);
-        ShowWindow();
         SelectSection(DashboardSection.Settings);
+        ShowWindow();
     }
 
     /// <summary>
@@ -428,8 +445,8 @@ public sealed class ChartForm : Form
     /// </summary>
     public void ShowDiagnosticsTab()
     {
-        ShowWindow();
         SelectSection(DashboardSection.Diagnostics);
+        ShowWindow();
     }
 
     /// <summary>
@@ -442,8 +459,16 @@ public sealed class ChartForm : Form
         {
             _speedPanel = new SpeedPanel();
             _speedPanel.HistoryRequested += start => SpeedHistoryRequested?.Invoke(start);
-            _speedPage.Controls.Add(_speedPanel);
-            if (_view is not null) _speedPanel.UpdateView(_view, _settings.Speed);
+            if (_telemetry is null) _speedPage.Controls.Add(_speedPanel);
+            else
+            {
+                var tabs = new TabControl { Dock = DockStyle.Fill };
+                var throughput = new TabPage("TPS"); throughput.Controls.Add(_speedPanel);
+                _telemetryPanel = new TelemetryPanel(_telemetry, _settings.DayStartMinutes);
+                var latency = new TabPage("OTel · TTFT"); latency.Controls.Add(_telemetryPanel);
+                tabs.SelectedIndexChanged += (_, _) => RefreshAllPages();
+                tabs.TabPages.AddRange([throughput, latency]); _speedPage.Controls.Add(tabs);
+            }
         }
         var target = section switch
         {
@@ -461,24 +486,31 @@ public sealed class ChartForm : Form
         target.BringToFront();
         _selectedSection = section;
         _sidebar.SetSelected(section);
+        if (Visible) RefreshAllPages();
     }
 
     /// <summary>
-    /// 显示已隐藏窗口、恢复普通状态并置于当前工作区前方。
+    /// 显式显示原生窗口后按真实客户区刷新快照；兼容启动器的隐藏参数并保留最大化状态。
     /// </summary>
     private void ShowWindow()
     {
+        var wasVisible = Visible;
         if (!Visible)
         {
             Show();
         }
 
-        WindowState = FormWindowState.Normal;
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        // 首次 Show 可能被进程 STARTUPINFO 的 SW_HIDE 覆盖，此时 Visible 已为 true。
+        // 返回值表示此前是否可见，不是成功标志，不能据此判定打开失败。
+        ShowNative(Handle, ShowNativeWindow);
+        if (!wasVisible) RefreshAllPages();
+        if (_selectedSection == DashboardSection.Dashboard) _dashboardContent.PerformLayout();
         Activate();
     }
 
     /// <summary>
-    /// 保存最新展示快照并同步刷新总览、历史图表、表格和诊断页。
+    /// 保存最新展示快照，仅刷新当前可见业务页，隐藏页面在切换时再使用最新快照。
     /// </summary>
     /// <param name="view">协调器发布的展示快照。</param>
     /// <param name="options">当前回归模式、窗口和样本过滤参数。</param>
@@ -490,11 +522,13 @@ public sealed class ChartForm : Form
         _replayProgress.Value = view.RepricingProgressPercent ?? 0;
         _view = view;
         _settings.Regression = options;
+        // 窗口已经创建但被隐藏时，仅保存最新快照，避免后台长期反复测量不可见控件。
+        if (IsHandleCreated && !Visible) return;
         RefreshAllPages();
     }
 
     /// <summary>
-    /// 在存在快照时刷新全部数据页；设置页的未保存输入不受影响。
+    /// 在存在快照时只刷新当前页；隐藏的速度页不聚合、不绑表，设置输入不受影响。
     /// </summary>
     private void RefreshAllPages()
     {
@@ -503,10 +537,15 @@ public sealed class ChartForm : Form
             return;
         }
 
-        RefreshDashboardPage();
-        RefreshHistoryPage();
-        _diagnosticsPanel.UpdateView(_view, _settings);
-        _speedPanel?.UpdateView(_view, _settings.Speed);
+        switch (_selectedSection)
+        {
+            case DashboardSection.Dashboard:
+                RefreshDashboardPage(); RefreshHistoryPage(); break;
+            case DashboardSection.Diagnostics:
+                _diagnosticsPanel.UpdateView(_view, _settings); break;
+            case DashboardSection.Speed when _speedPanel is not null && _speedPanel.Visible:
+                _speedPanel.UpdateView(_view, _settings.Speed, _settings.DayStartMinutes); break;
+        }
     }
 
     /// <summary>打开速度页，供托盘和独立窗口调用；数据读取由协调器负责。</summary>
@@ -547,7 +586,7 @@ public sealed class ChartForm : Form
     }
 
     /// <summary>
-    /// 按所选时间范围过滤快照，并刷新额度横幅、绘图区和逐点表格。
+    /// 下拉范围决定表格，免费审批仅在展示副本中过滤；缩放视野决定图表与回归，最新采样仍从完整快照取得。
     /// </summary>
     private void RefreshHistoryPage()
     {
@@ -556,31 +595,40 @@ public sealed class ChartForm : Form
             return;
         }
 
-        var cutoff = _interactiveWindow?.Start ?? (selected.Range switch
+        var now = DateTimeOffset.Now;
+        var tableStart = selected.Range switch
         {
             HistoryRange.All => DateTimeOffset.MinValue,
-            HistoryRange.Hours24 => DateTimeOffset.Now.AddHours(-24),
-            HistoryRange.Days7 => DateTimeOffset.Now.AddDays(-7),
-            HistoryRange.Days30 => DateTimeOffset.Now.AddDays(-30),
+            HistoryRange.Hours4 => now.AddHours(-4),
+            HistoryRange.Today => ChartTimeWindow.CurrentDay(now, _settings.DayStartMinutes).Start,
+            HistoryRange.Hours24 => now.AddHours(-24),
+            HistoryRange.Days7 => now.AddDays(-7),
+            HistoryRange.Days30 => now.AddDays(-30),
             HistoryRange.Custom => _customWindow.Start,
             _ => throw new InvalidOperationException($"不支持的历史时间范围：{selected.Range}。")
-        });
-        var end = _interactiveWindow?.End ?? (selected.Range == HistoryRange.Custom ? _customWindow.End : DateTimeOffset.Now);
-        var samples = _view.Samples.Where(sample => sample.Timestamp >= cutoff && sample.Timestamp <= end).ToArray();
-        var visibleStart = cutoff == DateTimeOffset.MinValue ? (samples.Length > 0 ? samples.Min(sample => sample.Timestamp) : end.AddDays(-1)) : cutoff;
-        _chart.Navigation.SetWindow(visibleStart, end);
+        };
+        var tableEnd = selected.Range == HistoryRange.Custom ? _customWindow.End : now;
+        var available = _view.Samples.Where(sample => sample.Timestamp <= now).ToArray();
+        var tableSamples = available.Where(sample => sample.Timestamp >= tableStart && sample.Timestamp <= tableEnd &&
+            !QuotaDisplayFilter.IsHidden(sample)).ToArray();
+        var cutoff = _interactiveWindow?.Start ?? tableStart;
+        var end = _interactiveWindow?.End ?? tableEnd;
+        // 空快捷范围应显示空图，不通过平移窗口把昨日或更早数据带进“当天/最近4小时”。
+        var emptyPreset = !_interactiveWindow.HasValue && tableSamples.Length == 0 && selected.Range != HistoryRange.Custom;
+        _chart.Navigation.SetDataBounds(!emptyPreset && available.Length > 0 ? available.Min(sample => sample.Timestamp) : null,
+            !emptyPreset && available.Length > 0 ? available.Max(sample => sample.Timestamp) : null);
+        if (!_interactiveWindow.HasValue && tableSamples.Length > 0)
+            end = tableSamples.Max(sample => sample.Timestamp);
+        var requestedStart = cutoff == DateTimeOffset.MinValue ? (available.Length > 0 ? available.Min(sample => sample.Timestamp) : end.AddDays(-1)) : cutoff;
+        var window = _chart.Navigation.SetWindow(requestedStart, end);
+        if (_interactiveWindow.HasValue) _interactiveWindow = window;
+        cutoff = window.Start; end = window.End;
+        var samples = available.Where(sample => sample.Timestamp >= cutoff && sample.Timestamp <= end).ToArray();
+        var visibleStart = window.Start;
         _navigationInfo.Text = UiText.Format("ChartInteractionHint", visibleStart.LocalDateTime, end.LocalDateTime);
         _navigationInfo.ForeColor = AppTheme.Current.MutedText;
-        var baseAnalysis = RegressionCalculator.Analyze(
-            samples,
-            _settings.Regression,
-            _view.PricingVersion);
-        var officialAnalysis = _settings.EnableOfficialLongContextEstimate
-            ? RegressionCalculator.AnalyzeOfficialLongContext(
-                samples,
-                _settings.Regression,
-                _view.PricingVersion)
-            : new RegressionAnalysis([], []);
+        var (baseAnalysis, officialAnalysis) = _viewportAnalysis.GetAnalysis(
+            samples, _settings.Regression, _view.PricingVersion, _settings.EnableOfficialLongContextEstimate);
         _baseEstimateCard.SetContent(
             UiText.Get(_view.ShowingPreviousPrices ? "RepricingPreviousLabel" : "EstimateBase"),
             EstimateValue(baseAnalysis.CurrentEstimate),
@@ -613,32 +661,48 @@ public sealed class ChartForm : Form
         var authoritative = _view.RateLimit is null
             ? "--"
             : PercentValue(_view.RateLimit.UsedPercent);
-        var latestValid = samples.OrderBy(sample => sample.Timestamp).LastOrDefault()?.UsedPercent;
+        var latestValid = available.OrderBy(sample => sample.Timestamp).LastOrDefault()?.UsedPercent;
+        var viewportLatest = samples.OrderBy(sample => sample.Timestamp).LastOrDefault()?.UsedPercent;
         _summary.Text = UiText.Format(
             "TrendSummaryFormat",
             authoritative,
             latestValid is decimal value ? PercentValue(value) : UiText.Get("None"),
+            viewportLatest is decimal viewportValue ? PercentValue(viewportValue) : UiText.Get("None"),
+            tableSamples.Length,
             samples.Length,
             _view.ArchivedSampleCount,
             _view.HistoricalReplayUnattributedUsedPercents.Count,
             filterHint);
         _summary.ForeColor = AppTheme.Current.MutedText;
+        if (_settings.EnableOfficialLongContextEstimate && samples.Any(sample => !sample.OfficialLongContextAvailable))
+            _summary.Text += " " + UiText.Format("OfficialLongContextUnavailable", samples.Count(sample => !sample.OfficialLongContextAvailable));
 
+        var referenceOnly = samples.Length == 0 && available.Length > 0;
+        var reference = referenceOnly ? _referenceAnalysis.GetAnalysis(available, _settings.Regression,
+            _view.PricingVersion, _settings.EnableOfficialLongContextEstimate) : (baseAnalysis, officialAnalysis);
+        var baseDrawing = referenceOnly
+            ? reference.Item1.Curve : baseAnalysis.Curve;
+        var officialDrawing = referenceOnly && _settings.EnableOfficialLongContextEstimate
+            ? reference.Item2.Curve : officialAnalysis.Curve;
+        if (referenceOnly && baseDrawing.Count > 0) _navigationInfo.Text += "\n" + UiText.Get("ChartReferenceOnly");
         _chart.SetData(
             samples,
-            baseAnalysis.Curve,
-            officialAnalysis.Curve,
+            RegressionCalculator.ProjectToWindow(baseDrawing, cutoff, end),
+            RegressionCalculator.ProjectToWindow(officialDrawing, cutoff, end),
             baseAnalysis.CurrentContributions);
-        _grid.DataSource = samples
+        // 缩放只改变视野和回归，状态文字刷新也不应重绑同一张表或重置用户滚动位置。
+        if (_grid.DataSource is not null && _tableLanguage == UiText.Culture.Name && _tableSamples.SequenceEqual(tableSamples)) return;
+        _grid.DataSource = tableSamples
             .OrderByDescending(sample => sample.Timestamp)
+            .Select(QuotaDisplayFilter.ForDisplay)
             .Select(sample => new SampleGridRow(
                 sample.Timestamp.LocalDateTime,
                 sample.UsedPercent,
                 sample.DeltaPercent,
                 sample.IntervalApiEquivalentUsd,
                 sample.EstimatedWeeklyQuotaUsd,
-                sample.OfficialLongContextIntervalApiEquivalentUsd,
-                sample.OfficialLongContextEstimatedWeeklyQuotaUsd,
+                sample.OfficialLongContextAvailable ? sample.OfficialLongContextIntervalApiEquivalentUsd : null,
+                sample.OfficialLongContextAvailable ? sample.OfficialLongContextEstimatedWeeklyQuotaUsd : null,
                 sample.Usage.InputTokens,
                 sample.Usage.CachedInputTokens,
                 sample.Usage.OutputTokens,
@@ -648,6 +712,7 @@ public sealed class ChartForm : Form
                 SampleSourceName(sample.SampleSource),
                 sample.PricingVersion))
             .ToArray();
+        _tableSamples = tableSamples; _tableLanguage = UiText.Culture.Name;
     }
 
     /// <summary>
@@ -694,7 +759,7 @@ public sealed class ChartForm : Form
     }
 
     /// <summary>
-    /// 创建并登记一个可区域化的数据表文本列。
+    /// 创建并登记可区域化的数据列；缺失的可选金额以破折号显示，不显示为零费用。
     /// </summary>
     /// <param name="titleKey">表头资源键。</param>
     /// <param name="property">数据绑定属性。</param>
@@ -710,6 +775,8 @@ public sealed class ChartForm : Form
             MinimumWidth = Math.Max(48, width),
             DefaultCellStyle = new DataGridViewCellStyle { Format = format }
         };
+        if (property is nameof(SampleGridRow.OfficialLongContextIntervalApiEquivalentUsd) or nameof(SampleGridRow.OfficialLongContextEstimatedWeeklyQuotaUsd))
+            column.DefaultCellStyle.NullValue = "—";
         _grid.Columns.Add(column);
         _gridColumnKeys[column] = titleKey;
     }
@@ -725,6 +792,8 @@ public sealed class ChartForm : Form
         _timeRange.DataSource = new[]
         {
             new RangeChoice(HistoryRange.All, UiText.Get("TimeRangeAll")),
+            new RangeChoice(HistoryRange.Hours4, UiText.Get("TimeRange4Hours")),
+            new RangeChoice(HistoryRange.Today, UiText.Get("TimeRangeToday")),
             new RangeChoice(HistoryRange.Hours24, UiText.Get("TimeRange24Hours")),
             new RangeChoice(HistoryRange.Days7, UiText.Get("TimeRange7Days")),
             new RangeChoice(HistoryRange.Days30, UiText.Get("TimeRange30Days")),
@@ -736,10 +805,10 @@ public sealed class ChartForm : Form
     }
 
     /// <summary>
-    /// 返回当前时间范围；控件尚未绑定时按默认的最近 30 天处理。
+    /// 返回当前时间范围；控件尚未绑定时按统一的最近 4 小时处理。
     /// </summary>
     private HistoryRange SelectedHistoryRange() =>
-        _timeRange.SelectedItem is RangeChoice selected ? selected.Range : HistoryRange.Days30;
+        _timeRange.SelectedItem is RangeChoice selected ? selected.Range : HistoryRange.Hours4;
 
     /// <summary>
     /// 创建默认选中的曲线显隐选项，并使用对应系列颜色强化辨识。
@@ -888,11 +957,13 @@ public sealed class ChartForm : Form
     }
 
     /// <summary>
-    /// 定义合并趋势工作台支持的四种时间范围。
+    /// 定义趋势工作台的初始图表与独立表格范围；当天从本地零点起算。
     /// </summary>
     private enum HistoryRange
     {
         All,
+        Hours4,
+        Today,
         Hours24,
         Days7,
         Days30,
@@ -919,8 +990,8 @@ public sealed class ChartForm : Form
         decimal DeltaPercent,
         decimal IntervalApiEquivalentUsd,
         decimal EstimatedWeeklyQuotaUsd,
-        decimal OfficialLongContextIntervalApiEquivalentUsd,
-        decimal OfficialLongContextEstimatedWeeklyQuotaUsd,
+        decimal? OfficialLongContextIntervalApiEquivalentUsd,
+        decimal? OfficialLongContextEstimatedWeeklyQuotaUsd,
         long InputTokens,
         long CachedInputTokens,
         long OutputTokens,

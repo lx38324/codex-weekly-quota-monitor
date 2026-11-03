@@ -20,12 +20,14 @@ public sealed record SpeedSample(string Source, DateTimeOffset StartedAt, DateTi
     string Model, string ServiceTier, long OutputTokens, long ReasoningTokens)
 {
     public double DurationSeconds => (EndedAt - StartedAt).TotalSeconds;
+    public DateTimeOffset? StreamingStartedAt { get; init; }
+    public string StreamingStatus { get; init; } = "legacy";
 }
 
 /// <summary>独立速度文件状态，不与额度游标、计价或重置基线共享消费位置。</summary>
 public sealed class SpeedState
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
     public Dictionary<string, SpeedCursor> Cursors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<SpeedSample> Samples { get; set; } = [];
     public long MalformedLines { get; set; }
@@ -49,6 +51,8 @@ public sealed record SpeedCursor
     public DateTimeOffset? NextStart { get; set; }
     public bool UnknownToolBoundary { get; set; }
     public HashSet<string> PendingTools { get; set; } = [];
+    public int EvidenceVersion { get; set; }
+    public StreamingSpeedEvidence Streaming { get; set; } = new();
 }
 
 /// <summary>一组同模型、同层级的响应；未结束时间桶或未满 N 次响应的组明确标注为进行中。</summary>
@@ -57,22 +61,29 @@ public sealed record SpeedBucket(DateTimeOffset Start, DateTimeOffset End, strin
 {
     public double TotalTps => OutputTokens / DurationSeconds;
     public double VisibleTps => VisibleTokens / DurationSeconds;
+    public int StreamingCount { get; init; }
+    public long StreamingOutputTokens { get; init; }
+    public double StreamingSeconds { get; init; }
+    public double MatchedEffectiveSeconds { get; init; }
+    public double? StreamingTps => StreamingSeconds > 0 ? StreamingOutputTokens / StreamingSeconds : null;
+    public double? MatchedEffectiveTps => MatchedEffectiveSeconds > 0 ? StreamingOutputTokens / MatchedEffectiveSeconds : null;
+    public IReadOnlyDictionary<string, int> StreamingExclusions { get; init; } = new Dictionary<string, int>();
 }
 
 /// <summary>还原日志边界并汇总速度；不依赖账号额度接口，也不推断日志中不存在的 TTFT。</summary>
 public static class SpeedMonitoring
 {
-    /// <summary>读取副本上的新增完整日志，成功后返回可原子保存的新状态；读取失败或取消不污染原游标。</summary>
+    /// <summary>读取新增完整日志；旧速度缓存保留样本并一次性补读有近期数据的来源以补流式证据，不影响额度游标。</summary>
     public static SpeedState Scan(SpeedState previous, IReadOnlyCollection<string> roots,
         DateTimeOffset now, int historyHours, CancellationToken cancellationToken = default)
     {
-        if (previous.Version != 1) throw new InvalidDataException("不支持的速度数据版本。");
+        if (previous.Version is not (1 or 2)) throw new InvalidDataException("不支持的速度数据版本。");
         if (historyHours < 1) throw new ArgumentOutOfRangeException(nameof(historyHours));
         var state = new SpeedState
         {
             Samples = previous.Samples.ToList(),
             Cursors = previous.Cursors.ToDictionary(pair => pair.Key,
-                pair => pair.Value with { PendingTools = [.. pair.Value.PendingTools] }, StringComparer.OrdinalIgnoreCase),
+                pair => pair.Value with { PendingTools = [.. pair.Value.PendingTools], Streaming = pair.Value.Streaming.Copy() }, StringComparer.OrdinalIgnoreCase),
             MalformedLines = previous.MalformedLines, MissingBoundaries = previous.MissingBoundaries,
             LastIssue = previous.LastIssue, HistoryHours = historyHours
         };
@@ -82,7 +93,9 @@ public static class SpeedMonitoring
             .GroupBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.MaxBy(path => new FileInfo(path).Length)!).ToArray();
         var sources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var known = state.Samples.Select(sample => (sample.Source, sample.StartedAt, sample.EndedAt)).ToHashSet();
+        var known = state.Samples.Select((sample, index) => (sample, index))
+            .ToDictionary(p => (p.sample.Source, p.sample.StartedAt, p.sample.EndedAt), p => p.index);
+        var recentSources = state.Samples.Where(s => s.EndedAt >= cutoff).Select(s => s.Source).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var path in files)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -90,17 +103,30 @@ public static class SpeedMonitoring
             sources.Add(source);
             var info = new FileInfo(path);
             if (!state.Cursors.TryGetValue(source, out var cursor) || cursor.CreationTicks != info.CreationTimeUtc.Ticks ||
-                info.Length < cursor.Length || (info.Length == cursor.Length && info.LastWriteTimeUtc.Ticks != cursor.WriteTicks))
-                cursor = new SpeedCursor { CreationTicks = info.CreationTimeUtc.Ticks };
-            var offset = RolloutLogReader.ProcessCompleteLines(path, cursor.Offset, line =>
+                info.Length < cursor.Length || (info.Length == cursor.Length && info.LastWriteTimeUtc.Ticks != cursor.WriteTicks) ||
+                cursor.EvidenceVersion < 1 && (info.Length > cursor.Offset || recentSources.Contains(source)))
+                cursor = new SpeedCursor { CreationTicks = info.CreationTimeUtc.Ticks, EvidenceVersion = 1 };
+            // 元数据已在上方验证轮转、截短和同长改写；已消费到末尾时无需再次打开文件。
+            // 未完成的尾行仍保留旧游标，追加换行后会继续读取。
+            var offset = cursor.Offset == info.Length ? cursor.Offset : RolloutLogReader.ProcessCompleteLines(path, cursor.Offset, line =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
                     using var document = JsonDocument.Parse(line);
                     var sample = Observe(document.RootElement, cursor, source);
-                    if (sample is not null && sample.EndedAt >= cutoff &&
-                        known.Add((sample.Source, sample.StartedAt, sample.EndedAt))) state.Samples.Add(sample);
+                    if (sample is not null && sample.EndedAt >= cutoff)
+                    {
+                        var key = (sample.Source, sample.StartedAt, sample.EndedAt);
+                        if (known.TryGetValue(key, out var index))
+                        {
+                            var old = state.Samples[index];
+                            if (old.OutputTokens != sample.OutputTokens || old.ReasoningTokens != sample.ReasoningTokens)
+                                throw new InvalidDataException("旧速度摘要与日志用量冲突，未覆盖旧样本。");
+                            state.Samples[index] = old with { StreamingStartedAt = sample.StreamingStartedAt, StreamingStatus = sample.StreamingStatus };
+                        }
+                        else { known[key] = state.Samples.Count; state.Samples.Add(sample); }
+                    }
                 }
                 catch (JsonException exception)
                 {
@@ -136,6 +162,7 @@ public static class SpeedMonitoring
             throw new InvalidDataException("速度日志缺少有效时间或载荷。");
         var type = Text(root, "type");
         var kind = Text(payload, "type");
+        cursor.Streaming.Observe(root, payload);
         if (type == "turn_context")
         {
             cursor.Model = Text(payload, "model") ?? "unknown";
@@ -190,12 +217,19 @@ public static class SpeedMonitoring
             throw new InvalidDataException("速度日志 reasoning token 无效。");
         var start = cursor.Start;
         var end = cursor.LastOutput.Value;
+        var duplicate = cursor.Streaming.ResponseId is { } responseId && responseId == cursor.Streaming.LastResponseId;
+        var streaming = start.HasValue ? cursor.Streaming.Evaluate(start.Value, end, usage) : (null, "outside_response");
+        var acceptedId = cursor.Streaming.ResponseId;
+        cursor.Streaming.ResetResponse();
         cursor.LastOutput = null;
         cursor.Start = cursor.PendingTools.Count == 0 && !cursor.UnknownToolBoundary ? cursor.NextStart ?? timestamp : null;
         cursor.NextStart = null;
+        if (duplicate) return null;
         if (start is null || end <= start || outputTokens < 0 || reasoning < 0 || reasoning > outputTokens ||
             cursor.Model is "unknown" or "") throw new InvalidDataException("无法确认速度响应边界或 token 分类。");
-        return new(source, start.Value, end, cursor.Model, cursor.Tier, outputTokens, reasoning);
+        if (acceptedId is not null) cursor.Streaming.LastResponseId = acceptedId;
+        return new(source, start.Value, end, cursor.Model, cursor.Tier, outputTokens, reasoning)
+        { StreamingStartedAt = streaming.Item1, StreamingStatus = streaming.Item2 };
     }
 
     /// <summary>清空无法继续关联的计时和工具等待状态，不跨中断拼接响应。</summary>
@@ -203,6 +237,7 @@ public static class SpeedMonitoring
     {
         cursor.Start = null; cursor.LastOutput = null; cursor.NextStart = null;
         cursor.PendingTools.Clear(); cursor.UnknownToolBoundary = false;
+        cursor.Streaming.ResetResponse();
     }
 
     /// <summary>仅读取字符串字段，缺失或异型数据不猜测实际值。</summary>
@@ -213,7 +248,7 @@ public static class SpeedMonitoring
     private static string NormalizeTier(string? tier) => tier switch
     { "default" or "standard" or "auto" => "standard", "priority" or "fast" => "fast", _ => "unknown" };
 
-    /// <summary>先按响应完成时间筛选闭区间，再分模型及层级聚合；自定义边界覆盖默认历史小时数，边缘时间桶标为不完整。</summary>
+    /// <summary>按完成时间筛选后分模型/层级聚合；流式分子分母仅使用同一批有效证据，缺失不会用原TPS补值。</summary>
     public static IReadOnlyList<SpeedBucket> Aggregate(IReadOnlyList<SpeedSample> samples, SpeedOptions options, DateTimeOffset now,
         DateTimeOffset? windowStart = null, DateTimeOffset? windowEnd = null)
     {
@@ -250,11 +285,29 @@ public static class SpeedMonitoring
                     if (windowStart.HasValue && start < lower) start = lower;
                     if (windowEnd.HasValue && end > upper) end = upper;
                 }
+                var streaming = items.Where(s => StreamingUnavailableReason(s, options.MinimumDurationSeconds) is null).ToArray();
                 result.Add(new(start, end, group.Key.Model, group.Key.ServiceTier, items.Length,
                     items.Sum(sample => sample.OutputTokens), items.Sum(sample => sample.OutputTokens - sample.ReasoningTokens),
-                    items.Sum(sample => sample.DurationSeconds), complete));
+                    items.Sum(sample => sample.DurationSeconds), complete)
+                {
+                    StreamingCount = streaming.Length,
+                    StreamingOutputTokens = streaming.Sum(s => s.OutputTokens),
+                    StreamingSeconds = streaming.Sum(s => (s.EndedAt - s.StreamingStartedAt!.Value).TotalSeconds),
+                    MatchedEffectiveSeconds = streaming.Sum(s => s.DurationSeconds),
+                    StreamingExclusions = items.Select(s => StreamingUnavailableReason(s, options.MinimumDurationSeconds))
+                        .Where(reason => reason is not null).GroupBy(reason => reason!).ToDictionary(g => g.Key, g => g.Count())
+                });
             }
         }
         return result.OrderByDescending(bucket => bucket.End).ThenBy(bucket => bucket.Model).ToArray();
+    }
+
+    /// <summary>统一流式样本资格及缺失原因，绘图、计数和均值共享同一最短时长规则。</summary>
+    public static string? StreamingUnavailableReason(SpeedSample sample, double minimumSeconds)
+    {
+        if (sample.StreamingStatus != "available") return sample.StreamingStatus;
+        if (sample.StreamingStartedAt is not { } start) return "missing_item_time";
+        if (start < sample.StartedAt.AddMilliseconds(-50) || start >= sample.EndedAt) return "outside_response";
+        return (sample.EndedAt - start).TotalSeconds < minimumSeconds ? "short_stream" : null;
     }
 }

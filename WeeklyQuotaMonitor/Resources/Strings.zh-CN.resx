@@ -38,7 +38,8 @@
   <data name="CurrentEstimateBaseFormat" xml:space="preserve"><value>{0} · {1}</value></data>
   <data name="CurrentEstimateDualFormat" xml:space="preserve"><value>{0} · Standard {1} · &gt;272K {2}</value></data>
   <data name="SummaryFormat" xml:space="preserve"><value>权威已用 {0} · 最新有效金额点 {1} · 待归因点 {2} · 样本 {3} · 归档 {4} · 样本上限 ${5:N2}{6}</value></data>
-  <data name="TrendSummaryFormat" xml:space="preserve"><value>权威已用 {0} · 最新有效点 {1} · 样本 {2}（归档 {3}）· 待归因 {4}{5}</value></data>
+  <data name="TrendSummaryFormat" xml:space="preserve"><value>权威已用 {0} · 最新采样 {1} · 当前视野截止 {2}
+表格按下拉范围：{3} 点 · 视野 {4} 点 · 归档 {5} · 待归因 {6}{7}</value></data>
   <data name="FilterHint" xml:space="preserve"><value>；部分或全部样本被上限过滤，请在设置中提高上限</value></data>
   <data name="RegressionLinear" xml:space="preserve"><value>线性回归</value></data>
   <data name="RegressionSegmented" xml:space="preserve"><value>分段回归</value></data>
@@ -52,6 +53,11 @@
   <data name="ChartAxisAmount" xml:space="preserve"><value>预估周额度（USD）</value></data>
   <data name="TimeRangeAll" xml:space="preserve"><value>全部</value></data>
   <data name="TimeRange24Hours" xml:space="preserve"><value>24 小时</value></data>
+  <data name="TimeRange4Hours" xml:space="preserve"><value>最近 4 小时</value></data>
+  <data name="TimeRangeToday" xml:space="preserve"><value>当天</value></data>
+  <data name="SettingsDayStart" xml:space="preserve"><value>当天起始时间（本地，未到起点沿用昨天）</value></data>
+  <data name="ValidationDayStart" xml:space="preserve"><value>当天起始时间必须在 00:00 至 23:59 之间。</value></data>
+  <data name="ChartTableScopeHint" xml:space="preserve"><value>指标随视野变化；表格按下拉时间范围，不随缩放改变。</value></data>
   <data name="TimeRange7Days" xml:space="preserve"><value>7 天</value></data>
   <data name="TimeRange30Days" xml:space="preserve"><value>30 天</value></data>
   <data name="GridTime" xml:space="preserve"><value>本地时间</value></data>
@@ -103,7 +109,8 @@
   <data name="SettingsMaximumSample" xml:space="preserve"><value>有效样本金额上限（USD）</value></data>
   <data name="SettingsOfficialLongContext" xml:space="preserve"><value>附加金额口径</value></data>
   <data name="SettingsOfficialLongContextOption" xml:space="preserve"><value>启用官方 &gt;272K 长上下文加价对比</value></data>
-  <data name="PricingDescription" xml:space="preserve"><value>选择模型并修改 Standard API 等价单价，单位为 USD/百万 token。保存后会按新价格重算当前周与保留期历史；Auto-review 继续使用 Luna 价格。</value></data>
+  <data name="PricingDescription" xml:space="preserve"><value>选择模型并修改 Standard API 等价单价，单位为 USD/百万 token。保存后重算当前周与保留期历史。ChatGPT 自动审批在公告后计为免费，不受自定义模型价格影响；之前保留 Luna 代理计价。</value></data>
+  <data name="AutoReviewPricingPolicy" xml:space="preserve"><value>ChatGPT 自动审批以 2026-10-06 07:13:54 UTC 公告时刻为计价分界：之后免费，之前按 GPT-5.6 Luna 代理计价。官方未公布后台精确生效时刻；免费不代表 API-key 请求价格为零。token 与速度仍保留。</value></data>
   <data name="PricingModel" xml:space="preserve"><value>模型</value></data>
   <data name="PricingShortContext" xml:space="preserve"><value>短上下文价格（USD / 1M token）</value></data>
   <data name="PricingLongContext" xml:space="preserve"><value>长上下文价格（USD / 1M token）</value></data>
@@ -205,12 +212,18 @@
   <data name="SpeedNoSamples" xml:space="preserve"><value>尚无满足条件的速度样本</value></data>
   <data name="SpeedLatest" xml:space="preserve"><value>最近一组（{3} · {4}）：总输出 {0:N2} TPS · 可见输出 {1:N2} TPS · {2} 次响应</value></data>
   <data name="SpeedMeasurementNote" xml:space="preserve"><value>端到端吞吐估计 = 总输出 token ÷ 总响应耗时（含等待、预填充和传输，扣除可识别工具等待）；不是纯解码速度。按模型及 Standard/Fast/unknown 分组；修改分组参数后重新汇总。</value></data>
-  <data name="SpeedTtftUnavailable" xml:space="preserve"><value>TTFT：不可用。本地 rollout 没有可靠的请求发出与首 token 时间戳，本版本未接入 OTel。</value></data>
+  <data name="SpeedTtftUnavailable" xml:space="preserve"><value>JSONL TTFT：不可用。rollout 没有可靠的首 token 时间戳；实时遥测请切换 OTel · TTFT 标签。</value></data>
   <data name="SpeedRetained" xml:space="preserve"><value>保留 {0} 条响应摘要 · 仅统计耗时 ≥ {1} 秒 · 最近 {2} 小时；设置 → 速度监测可调整。</value></data>
   <data name="SpeedStart" xml:space="preserve"><value>区间开始（本地）</value></data>
   <data name="SpeedEnd" xml:space="preserve"><value>区间结束（本地）</value></data>
   <data name="SpeedModel" xml:space="preserve"><value>模型</value></data>
-  <data name="SpeedTier" xml:space="preserve"><value>速度层级</value></data>
+  <data name="SpeedTier" xml:space="preserve"><value>速度模式</value></data>
+  <data name="SpeedAllTiers" xml:space="preserve"><value>全部速度模式（混合均值）</value></data>
+  <data name="SpeedStandard" xml:space="preserve"><value>Standard（标准）</value></data>
+  <data name="SpeedFast" xml:space="preserve"><value>Fast（加速）</value></data>
+  <data name="SpeedUnknown" xml:space="preserve"><value>未知速度模式</value></data>
+  <data name="SpeedTierScope" xml:space="preserve"><value>{0} · 标准 {1:N0} / 加速 {2:N0} / 未知 {3:N0}</value></data>
+  <data name="SpeedUnknownNote" xml:space="preserve"><value>未知表示未保留可靠的速度模式标记，不使用当前配置倒推历史观测。</value></data>
   <data name="SpeedSamples" xml:space="preserve"><value>响应数</value></data>
   <data name="SpeedTotalTps" xml:space="preserve"><value>总输出 TPS</value></data>
   <data name="SpeedVisibleTps" xml:space="preserve"><value>可见输出 TPS</value></data>
@@ -230,8 +243,116 @@
   <data name="SpeedVisibleCaption" xml:space="preserve"><value>扣除推理 token · 相同计时口径</value></data>
   <data name="SpeedGroupCaption" xml:space="preserve"><value>{0:N0} 个分组 · {1:N0} 个模型</value></data>
   <data name="SpeedCoverage" xml:space="preserve"><value>缓存响应覆盖：{0} — {1}（本地） · {2:N0} 条摘要；更早窗口自动补读现存日志。</value></data>
-  <data name="SpeedShortNote" xml:space="preserve"><value>端到端 TPS 估计，非纯解码速度 · TTFT：不可用 · 悬停查看测量口径</value></data>
+  <data name="SpeedShortNote" xml:space="preserve"><value>端到端 TPS 估计，非纯解码速度 · JSONL TTFT：不可用；请查看 OTel · TTFT 标签</value></data>
   <data name="SpeedWindowLoading" xml:space="preserve"><value>所选时间窗尚未完整扫描；正在等待后台补读，当前仅展示已缓存结果（速度监测需启用）。</value></data>
   <data name="ChartInitialRange" xml:space="preserve"><value>初始范围</value></data>
   <data name="ChartInteractionHint" xml:space="preserve"><value>滚轮缩放 · 拖拽平移 · 双击复位　当前：{0:MM-dd HH:mm:ss} — {1:MM-dd HH:mm:ss}（本地）</value></data>
+  <data name="ChartReferenceOnly" xml:space="preserve"><value>当前窗口无采样点：显示历史拟合参考线，不作为当前估值或新增样本。</value></data>
+  <data name="OtelTitle" xml:space="preserve"><value>遥测 · 首 token 延迟</value></data>
+  <data name="OtelEnabled" xml:space="preserve"><value>启用本机 OTel 指标接收</value></data>
+  <data name="OtelPort" xml:space="preserve"><value>本机监听端口（不自动修改 Codex）</value></data>
+  <data name="OtelDetailDays" xml:space="preserve"><value>导出区间摘要保留天数</value></data>
+  <data name="OtelMinuteDays" xml:space="preserve"><value>分钟摘要保留天数</value></data>
+  <data name="OtelRetentionDays" xml:space="preserve"><value>小时摘要保留天数</value></data>
+  <data name="OtelBudget" xml:space="preserve"><value>遥测文件总预算（MiB）</value></data>
+  <data name="OtelPrivacy" xml:space="preserve"><value>采集与隐私</value></data>
+  <data name="OtelPrivacyNote" xml:space="preserve"><value>仅接收 OTLP/HTTP binary 指标；日志及 trace 按策略丢弃，不保存正文。只监听 127.0.0.1。</value></data>
+  <data name="OtelValidation" xml:space="preserve"><value>遥测参数无效：端口 1024–65535；保留期须逐级递增；容量 16–1024 MiB。</value></data>
+  <data name="OtelTurnTtft" xml:space="preserve"><value>回合 TTFT</value></data>
+  <data name="OtelServiceTtft" xml:space="preserve"><value>服务端 TTFT · service</value></data>
+  <data name="OtelIapiTtft" xml:space="preserve"><value>服务端 TTFT · IAPI</value></data>
+  <data name="OtelTbt" xml:space="preserve"><value>服务端 token 间隔 · service</value></data>
+  <data name="OtelInference" xml:space="preserve"><value>服务端推理耗时</value></data>
+  <data name="OtelTurnDuration" xml:space="preserve"><value>回合端到端耗时</value></data>
+  <data name="OtelToolDuration" xml:space="preserve"><value>工具调用耗时</value></data>
+  <data name="OtelBucketMinutes" xml:space="preserve"><value>聚合分钟</value></data>
+  <data name="OtelMean" xml:space="preserve"><value>观测加权均值（ms）</value></data>
+  <data name="OtelObservations" xml:space="preserve"><value>观测次数</value></data>
+  <data name="OtelNotRequests" xml:space="preserve"><value>直方图观测数，不是上报包或请求数</value></data>
+  <data name="OtelResolution" xml:space="preserve"><value>保留粒度</value></data>
+  <data name="OtelExportInterval" xml:space="preserve"><value>导出区间</value></data>
+  <data name="OtelBoundaryNote" xml:space="preserve"><value>边界按整段摘要纳入</value></data>
+  <data name="OtelMeasurementNote" xml:space="preserve"><value>TTFT、服务端计时和工具耗时各自独立；按导出结束时间纳入整段观测，不能还原逐请求时间。层级未上报则为 unknown，不从当前配置推断。</value></data>
+  <data name="OtelStatus" xml:space="preserve"><value>接收：{0} · 最近指标包：{1} · 成功 {2} / 拒绝 {3} · 丢弃日志/trace 包 {4} · {5:N2} MiB · 容量淘汰 {6} 行 · 本次基线 {7} / 重复或乱序 {8} / 不连续 {9}</value></data>
+  <data name="OtelNotListening" xml:space="preserve"><value>未监听（已停用或启动失败）</value></data>
+  <data name="OtelWaiting" xml:space="preserve"><value>暂无该指标观测。首次累计包只建立基线；后续新增观测才计入。已配置输出不代表模型实际提供该指标。</value></data>
+  <data name="OtelLastError" xml:space="preserve"><value>最近错误（未清除记录）：</value></data>
+  <data name="OtelReadFailed" xml:space="preserve"><value>遥测刷新失败，当前图表不是最新结果：</value></data>
+  <data name="OtelTruncated" xml:space="preserve"><value>结果超过 10,000 组，仅展示最近部分；请缩短窗口或增大聚合分钟。</value></data>
+  <data name="SpeedMetricLineStyles" xml:space="preserve"><value>实线 Standard · 虚线 Fast · 点线 unknown · 纵轴 {0}</value></data>
+  <data name="OtelRequestTtft" xml:space="preserve"><value>请求 TTFT（日志事件）</value></data>
+  <data name="OtelTierSource" xml:space="preserve"><value>模式来源</value></data>
+  <data name="OtelEventTime" xml:space="preserve"><value>原始事件时间</value></data>
+  <data name="OtelRequestNote" xml:space="preserve"><value>按会话、时间及可用 token 唯一关联，不排除不同模型。模型不一致不等于已证实服务端切模；OTel model 不保证是实际返回模型。记忆任务可共享会话 ID，缺少明确用途标记时来源保持未知。跨模型不继承本地速度；旧记录只能在可用本地摘要范围内回补。</value></data>
+  <data name="OtelLocalModel" xml:space="preserve"><value>本地关联模型</value></data>
+  <data name="OtelReportedModel" xml:space="preserve"><value>OTel 模型</value></data>
+  <data name="OtelAssociation" xml:space="preserve"><value>关联结果</value></data>
+  <data name="OtelMismatchCount" xml:space="preserve"><value>模型差异请求数</value></data>
+  <data name="OtelOrigin" xml:space="preserve"><value>明确来源</value></data>
+  <data name="OtelMatchBasis" xml:space="preserve"><value>匹配依据</value></data>
+  <data name="OtelMismatchesOnly" xml:space="preserve"><value>仅模型不一致</value></data>
+  <data name="OtelSource_rollout-model-mismatch" xml:space="preserve"><value>跨模型，层级未继承</value></data>
+  <data name="OtelEvidence_all" xml:space="preserve"><value>全部来源</value></data>
+  <data name="OtelEvidence_unknown" xml:space="preserve"><value>来源未确认</value></data>
+  <data name="OtelEvidence_memory_extraction" xml:space="preserve"><value>记忆提取（明确标记）</value></data>
+  <data name="OtelEvidence_memory_consolidation" xml:space="preserve"><value>记忆整合（明确标记）</value></data>
+  <data name="OtelEvidence_auto_review" xml:space="preserve"><value>自动审查（明确标记）</value></data>
+  <data name="OtelEvidence_subagent" xml:space="preserve"><value>子代理（明确标记）</value></data>
+  <data name="OtelEvidence_conflicting" xml:space="preserve"><value>来源标记冲突</value></data>
+  <data name="OtelEvidence_mixed" xml:space="preserve"><value>混合（聚合桶）</value></data>
+  <data name="OtelEvidence_matched" xml:space="preserve"><value>模型一致</value></data>
+  <data name="OtelEvidence_model-mismatch" xml:space="preserve"><value>模型不一致</value></data>
+  <data name="OtelEvidence_ambiguous" xml:space="preserve"><value>多候选，无法唯一关联</value></data>
+  <data name="OtelEvidence_unmatched" xml:space="preserve"><value>未关联</value></data>
+  <data name="OtelEvidence_background" xml:space="preserve"><value>独立用途，不关联本地响应</value></data>
+  <data name="OtelEvidence_explicit-origin" xml:space="preserve"><value>事件明确来源</value></data>
+  <data name="OtelEvidence_none" xml:space="preserve"><value>无匹配</value></data>
+  <data name="OtelEvidence_multiple-candidates" xml:space="preserve"><value>多个响应候选</value></data>
+  <data name="OtelEvidence_time-tokens" xml:space="preserve"><value>会话＋时间＋token</value></data>
+  <data name="OtelEvidence_time-only" xml:space="preserve"><value>仅会话＋时间</value></data>
+  <data name="OtelSource_event" xml:space="preserve"><value>事件直报</value></data>
+  <data name="OtelSource_rollout" xml:space="preserve"><value>本地响应关联</value></data>
+  <data name="OtelSource_unknown" xml:space="preserve"><value>未确认</value></data>
+  <data name="OtelSource_unknown-event" xml:space="preserve"><value>事件层级不支持</value></data>
+  <data name="OtelSource_ambiguous" xml:space="preserve"><value>多个候选</value></data>
+  <data name="OtelSource_mixed" xml:space="preserve"><value>混合来源</value></data>
+  <data name="OtelSource_metric" xml:space="preserve"><value>指标标签</value></data>
+  <data name="StartupStatusLabel" xml:space="preserve"><value>实际启动状态</value></data>
+  <data name="StartupReady" xml:space="preserve"><value>已配置登录后启动（仅托盘）。勾选项修改后请保存并应用。</value></data>
+  <data name="StartupMissing" xml:space="preserve"><value>启动项缺失、路径不符或程序未安装。勾选开机启动并保存可重新注册。</value></data>
+  <data name="StartupBlocked" xml:space="preserve"><value>Windows 已禁用此启动项，请在系统“启动应用”中启用。</value></data>
+  <data name="StartupRepairShortcut" xml:space="preserve"><value>修复开始菜单快捷方式</value></data>
+  <data name="StartupShortcutRepaired" xml:space="preserve"><value>已修复开始菜单入口，点击可打开或唤出主窗口。</value></data>
+  <data name="StartupOpenWindows" xml:space="preserve"><value>打开 Windows 启动应用设置</value></data>
+  <data name="StartupApplyFailed" xml:space="preserve"><value>操作未完成：</value></data>
+  <data name="OtelDiagnosticsHeading" xml:space="preserve"><value>采集诊断（当前指标，按接收时间，5分钟粒度；保留7天）：收到点数与入库观测数口径不同。</value></data>
+  <data name="OtelDiagnosticsEmpty" xml:space="preserve"><value>该时间窗暂无诊断记录；安装诊断版之前的数据无法补造。</value></data>
+  <data name="OtelDiagnosticsLine" xml:space="preserve"><value>{0}：收到 {1} 点 · 入库 {2} 次观测 · 基线 {3} · 重复 {4} · 回退/重叠 {5} · 拒绝 {6} · 忽略 {7} · 请求日志 {8} · 无增量 {9}</value></data>
+  <data name="OtelDiagnosticsAbsent" xml:space="preserve"><value>请求日志存在，但未收到该指标</value></data>
+  <data name="OtelDiagnosticsDetails" xml:space="preserve"><value>采集诊断明细</value></data>
+  <data name="OtelDiagnosticsReportHeader" xml:space="preserve"><value>接收时间窗 {0:MM-dd HH:mm:ss} — {1:MM-dd HH:mm:ss}（本地）；5分钟粒度，保留7天。
+received=收到，stored=已提交，baseline=首次累计基线，duplicate=重复，discontinuity=回退/重叠，empty=无增量，ignored=未选择/无记录标记，rejected=整包拒绝。
+points 是导出点数，observations 仅为已提交增量；received 是接收时刻，event 是上报事件/导出结束时刻。指标名、原因按原始标识显示，不包含原始正文。</value></data>
+  <data name="OtelServerMetricNotExported" xml:space="preserve"><value>收到 WebSocket timing 事件，但当前指标未导出到接收端；仅凭事件计数无法区分服务器未提供数值或客户端未导出，不能恢复真实服务端 TBT。</value></data>
+  <data name="OtelServerTimingNotReceived" xml:space="preserve"><value>收到 WebSocket 事件，但未收到 timing 事件或当前服务端指标；不能用客户端 token 间隔替代。</value></data>
+  <data name="OtelServerTransportUnconfirmed" xml:space="preserve"><value>当前指标及 WebSocket 时序证据均未收到；不能仅据此判定是 HTTP 传输，需检查客户端导出。</value></data>
+  <data name="OtelTransportPoints" xml:space="preserve"><value>WS 导出点 {0:N0} · timing 导出点 {1:N0}（非请求数）</value></data>
+  <data name="SpeedStreamingTps" xml:space="preserve"><value>流式阶段估计 TPS</value></data>
+  <data name="SpeedMatchedEffectiveTps" xml:space="preserve"><value>同批响应有效 TPS</value></data>
+  <data name="SpeedSameSamplesNote" xml:space="preserve"><value>仅与流式估计的同一批响应比较，包含前置等待</value></data>
+  <data name="SpeedStreamingCount" xml:space="preserve"><value>流式有效 / 总样本</value></data>
+  <data name="SpeedStreamingCoverage" xml:space="preserve"><value>当前视野流式覆盖：{0:N0} / {1:N0} 次有效响应（{2:N1}%）；两种估值使用同批样本。</value></data>
+  <data name="SpeedStreamingExclusions" xml:space="preserve"><value>流式排除原因</value></data>
+  <data name="SpeedStreamingNote" xml:space="preserve"><value>输出 token ÷（末次模型输出 − 首个生成 item 的可信起点）。含思考 token；排除 item 前等待，仍含传输与缓冲，非服务端纯解码速度。仅 item ID 对齐、逐响应用量一致且时长达标的样本参与；缺失不以原 TPS 补值。</value></data>
+  <data name="SpeedStreamReason_legacy" xml:space="preserve"><value>旧缓存尚无证据</value></data>
+  <data name="SpeedStreamReason_unverified_usage" xml:space="preserve"><value>缺逐响应用量确认</value></data>
+  <data name="SpeedStreamReason_usage_mismatch" xml:space="preserve"><value>逐响应用量不一致</value></data>
+  <data name="SpeedStreamReason_tool_first" xml:space="preserve"><value>首项为工具或无生成首项</value></data>
+  <data name="SpeedStreamReason_hidden_reasoning" xml:space="preserve"><value>思考先于可见起点</value></data>
+  <data name="SpeedStreamReason_missing_item_time" xml:space="preserve"><value>缺首项 ID 或时间</value></data>
+  <data name="SpeedStreamReason_collapsed_time" xml:space="preserve"><value>起止重合或过短</value></data>
+  <data name="SpeedStreamReason_outside_response" xml:space="preserve"><value>时间超出响应边界</value></data>
+  <data name="SpeedStreamReason_short_stream" xml:space="preserve"><value>流式时长未达阈值</value></data>
+  <data name="SpeedStreamReason_retried" xml:space="preserve"><value>响应含失败或重试</value></data>
+  <data name="OfficialLongContextUnavailable" xml:space="preserve"><value>有 {0} 个样本缺少长上下文对比价格，仅参与基础计费；对比金额显示为 —。</value></data>
 </root>

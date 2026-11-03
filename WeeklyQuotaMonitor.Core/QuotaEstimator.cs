@@ -199,7 +199,7 @@ public static class QuotaEstimator
     }
 
     /// <summary>
-    /// 将一次增量日志扫描累积到当前百分比区间，并验证价格版本没有跨升级混用。
+    /// 累积基础金额并验证价格版本；长上下文对比独立记录可用性，不能用部分对比金额冒充整个区间。
     /// </summary>
     /// <param name="state">需要更新的监控状态。</param>
     /// <param name="scan">本轮扫描结果。</param>
@@ -233,6 +233,8 @@ public static class QuotaEstimator
         state.PendingPricingUsages.AddRange(scan.PricingUsages);
         state.PendingApiEquivalentUsd += scan.ApiEquivalentUsd;
         state.PendingOfficialLongContextApiEquivalentUsd += scan.OfficialLongContextApiEquivalentUsd;
+        state.PendingOfficialLongContextAvailable &= scan.OfficialLongContextAvailable;
+        state.PendingOfficialLongContextIssues.UnionWith(scan.OfficialLongContextIssues);
         state.PendingModelResponseCount += scan.ModelResponseCount;
         state.PendingUnpricedModelResponses += scan.UnpricedModelResponses;
         state.PendingMalformedRolloutLines += scan.MalformedLineCount;
@@ -260,7 +262,7 @@ public static class QuotaEstimator
     }
 
     /// <summary>
-    /// 根据当前参考百分比、累计金额和数据质量决定等待、放弃或生成样本。
+    /// 根据基础金额及数据质量生成样本；对比价格缺失不阻断基础采样，也不伪造对比估值。
     /// </summary>
     /// <param name="state">当前监控状态。</param>
     /// <param name="snapshot">当前额度快照。</param>
@@ -297,8 +299,7 @@ public static class QuotaEstimator
         }
 
         if (state.PendingModelResponseCount == 0 ||
-            state.PendingApiEquivalentUsd <= 0 ||
-            state.PendingOfficialLongContextApiEquivalentUsd <= 0)
+            state.PendingApiEquivalentUsd <= 0)
         {
             state.UnattributedPercentChanges++;
             AdvanceReferenceAndClearPending(state, snapshot.UsedPercent);
@@ -307,7 +308,7 @@ public static class QuotaEstimator
 
         var estimatedWeeklyUsd = state.PendingApiEquivalentUsd * 100m / deltaPercent;
         var officialLongContextEstimatedWeeklyUsd =
-            state.PendingOfficialLongContextApiEquivalentUsd * 100m / deltaPercent;
+            state.PendingOfficialLongContextAvailable ? state.PendingOfficialLongContextApiEquivalentUsd * 100m / deltaPercent : 0;
         var sample = new QuotaSample(
             snapshot.SampledAt,
             snapshot.LimitId,
@@ -320,8 +321,10 @@ public static class QuotaEstimator
             string.Join(", ", state.PendingModels.OrderBy(model => model, StringComparer.OrdinalIgnoreCase)))
         {
             AmountDefinition = PublicApiPricing.AmountDefinition,
-            OfficialLongContextIntervalApiEquivalentUsd = state.PendingOfficialLongContextApiEquivalentUsd,
+            OfficialLongContextIntervalApiEquivalentUsd = state.PendingOfficialLongContextAvailable ? state.PendingOfficialLongContextApiEquivalentUsd : 0,
             OfficialLongContextEstimatedWeeklyQuotaUsd = officialLongContextEstimatedWeeklyUsd,
+            OfficialLongContextAvailable = state.PendingOfficialLongContextAvailable,
+            OfficialLongContextIssue = string.Join("；", state.PendingOfficialLongContextIssues),
             OfficialLongContextAmountDefinition = PublicApiPricing.OfficialLongContextAmountDefinition,
             PricingVersion = pricingVersion,
             PricingUsages = state.PendingPricingUsages.ToArray(),
@@ -334,7 +337,9 @@ public static class QuotaEstimator
         return new(
             true,
             sample,
-            $"{statusPrefix}新增样本：无长上下文加价 ${estimatedWeeklyUsd:F2}；官方 >272K 加价 ${officialLongContextEstimatedWeeklyUsd:F2}。");
+            sample.OfficialLongContextAvailable
+                ? $"{statusPrefix}新增样本：无长上下文加价 ${estimatedWeeklyUsd:F2}；官方 >272K 加价 ${officialLongContextEstimatedWeeklyUsd:F2}。"
+                : $"{statusPrefix}新增基础样本：无长上下文加价 ${estimatedWeeklyUsd:F2}。");
     }
 
     /// <summary>
@@ -438,6 +443,8 @@ public static class QuotaEstimator
     {
         state.PendingApiEquivalentUsd = 0;
         state.PendingOfficialLongContextApiEquivalentUsd = 0;
+        state.PendingOfficialLongContextAvailable = true;
+        state.PendingOfficialLongContextIssues.Clear();
         state.PendingUsage = TokenUsage.Zero;
         state.PendingPricingUsages.Clear();
         state.PendingModelResponseCount = 0;

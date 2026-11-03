@@ -85,6 +85,12 @@ public static class UiText
     public static string Format(string key, params object?[] arguments) =>
         string.Format(Culture, Get(key), arguments);
 
+    /// <summary>为速度筛选、图例和明细统一显示层级；空值表示全部，未识别证据不冒充 Standard。</summary>
+    public static string SpeedTierName(string? tier) => Get(tier switch
+    {
+        null => "SpeedAllTiers", "standard" => "SpeedStandard", "fast" => "SpeedFast", _ => "SpeedUnknown"
+    });
+
     /// <summary>
     /// 根据设置和 Windows UI 语言解析程序实际使用的 CultureInfo。
     /// </summary>
