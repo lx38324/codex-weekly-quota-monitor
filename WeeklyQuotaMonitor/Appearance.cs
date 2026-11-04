@@ -150,7 +150,7 @@ public static class AppTheme
             grid.DefaultCellStyle.BackColor = palette.Surface;
             grid.DefaultCellStyle.ForeColor = palette.Text;
             grid.DefaultCellStyle.SelectionBackColor = palette.Accent;
-            grid.DefaultCellStyle.SelectionForeColor = Color.White;
+            grid.DefaultCellStyle.SelectionForeColor = palette.IsDark ? palette.Window : Color.White;
             grid.ColumnHeadersDefaultCellStyle.BackColor = palette.SurfaceAlternate;
             grid.ColumnHeadersDefaultCellStyle.ForeColor = palette.Text;
             grid.EnableHeadersVisualStyles = false;

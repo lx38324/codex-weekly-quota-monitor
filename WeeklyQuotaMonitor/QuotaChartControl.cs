@@ -106,11 +106,17 @@ public sealed class QuotaChartControl : Control
         e.Graphics.FillRectangle(background, ClientRectangle);
 
         var scale = DeviceDpi / 96F;
+        var legendEntries = LegendEntries();
+        var legendWidth = legendEntries.Select(entry => e.Graphics.MeasureString(entry.Label, Font).Width + 46 * scale).DefaultIfEmpty(1).Max();
+        var legendColumns = Math.Max(1, Math.Min(2, (int)((Width - 100 * scale) / legendWidth)));
+        var legendHeight = (float)Math.Ceiling(legendEntries.Count / (double)legendColumns) * (Font.GetHeight(e.Graphics) + 6 * scale);
         var plot = new RectangleF(
             76 * scale,
-            30 * scale,
+            30 * scale + legendHeight,
             Math.Max(10 * scale, Width - 104 * scale),
-            Math.Max(10 * scale, Height - 94 * scale));
+            Math.Max(10 * scale, Height - 94 * scale - legendHeight));
+        if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -2, -2),
+            AppTheme.Current.Text, AppTheme.Current.Surface);
         Navigation.SetPlot(plot);
         using var axisPen = new Pen(AppTheme.Current.Border, 1F * scale);
         e.Graphics.DrawLine(axisPen, plot.Left, plot.Bottom, plot.Right, plot.Bottom);
@@ -272,9 +278,10 @@ public sealed class QuotaChartControl : Control
     {
         using var gridPen = new Pen(AppTheme.Current.Grid, scale);
         using var labelBrush = new SolidBrush(AppTheme.Current.MutedText);
-        for (var index = 0; index <= 5; index++)
+        var ticks = Math.Clamp((int)(plot.Height / (Font.GetHeight(graphics) + 8 * scale)), 1, 5);
+        for (var index = 0; index <= ticks; index++)
         {
-            var ratio = index / 5F;
+            var ratio = index / (float)ticks;
             var y = plot.Bottom - plot.Height * ratio;
             graphics.DrawLine(gridPen, plot.Left, y, plot.Right, y);
             var value = minY + (maxY - minY) * (decimal)ratio;
@@ -295,7 +302,7 @@ public sealed class QuotaChartControl : Control
         }
 
         graphics.DrawString(UiText.Get("ChartAxisTime"), Font, labelBrush, plot.Right - 70 * scale, plot.Bottom + 34 * scale);
-        graphics.DrawString(UiText.Get("ChartAxisAmount"), Font, labelBrush, plot.Left, 6 * scale);
+        graphics.DrawString(UiText.Get("ChartAxisAmount"), Font, labelBrush, plot.Left, plot.Top - 24 * scale);
     }
 
     /// <summary>
@@ -466,7 +473,7 @@ public sealed class QuotaChartControl : Control
     /// <summary>
     /// 绘制基础口径与官方长上下文口径的样本和回归图例。
     /// </summary>
-    private void DrawLegend(Graphics graphics, RectangleF plot, float scale)
+    private List<(string Label, Color Color, bool IsRegression, bool IsContribution)> LegendEntries()
     {
         var entries = new List<(string Label, Color Color, bool IsRegression, bool IsContribution)>();
         if (_seriesVisibility.ShowBaseSamples)
@@ -481,13 +488,21 @@ public sealed class QuotaChartControl : Control
             (_seriesVisibility.ShowBaseSamples || _seriesVisibility.ShowOfficialSamples))
             entries.Add((UiText.Get("SeriesCurrentContributions"), Color.FromArgb(245, 158, 11), false, true));
 
+        return entries;
+    }
+
+    /// <summary>按真实图例文字宽度换列，图例独占绘图区上方，不覆盖样本和贡献标记。</summary>
+    private void DrawLegend(Graphics graphics, RectangleF plot, float scale)
+    {
+        var entries = LegendEntries();
+        var width = entries.Select(entry => graphics.MeasureString(entry.Label, Font).Width + 46 * scale).DefaultIfEmpty(1).Max();
+        var columns = Math.Max(1, Math.Min(2, (int)((Width - 100 * scale) / width)));
         using var textBrush = new SolidBrush(AppTheme.Current.Text);
-        var startX = Math.Max(plot.Left + 8 * scale, plot.Right - 440 * scale);
         for (var index = 0; index < entries.Count; index++)
         {
             var entry = entries[index];
-            var x = startX + index % 2 * 220 * scale;
-            var y = plot.Top + 9 * scale + index / 2 * 23 * scale;
+            var x = plot.Left + index % columns * width;
+            var y = 12 * scale + index / columns * (Font.GetHeight(graphics) + 6 * scale);
             if (entry.IsContribution)
             {
                 using var ringPen = new Pen(entry.Color, 2F * scale);

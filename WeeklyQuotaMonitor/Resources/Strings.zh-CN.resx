@@ -115,7 +115,7 @@
   <data name="PricingShortContext" xml:space="preserve"><value>短上下文价格（USD / 1M token）</value></data>
   <data name="PricingLongContext" xml:space="preserve"><value>长上下文价格（USD / 1M token）</value></data>
   <data name="PricingLongPricing" xml:space="preserve"><value>长上下文档位</value></data>
-  <data name="PricingLongEnabled" xml:space="preserve"><value>启用长上下文价格</value></data>
+  <data name="PricingLongEnabled" xml:space="preserve"><value>提供可选对比价格（关闭后基础仍按标准价）</value></data>
   <data name="PricingThreshold" xml:space="preserve"><value>长上下文阈值（输入 token）</value></data>
   <data name="PricingInput" xml:space="preserve"><value>未缓存输入</value></data>
   <data name="PricingCachedInput" xml:space="preserve"><value>缓存读取</value></data>
@@ -173,7 +173,7 @@
   <data name="DiagnosticsCopy" xml:space="preserve"><value>复制诊断信息</value></data>
   <data name="DiagnosticsCopied" xml:space="preserve"><value>诊断信息已复制到剪贴板。</value></data>
   <data name="TooltipFormat" xml:space="preserve"><value>周额 {0} | 已用 {1} | 样本 {2}</value></data>
-  <data name="DashboardCurrentWindow" xml:space="preserve"><value>当前权威周额度窗口</value></data>
+  <data name="DashboardCurrentWindow" xml:space="preserve"><value>账号当前周窗口</value></data>
   <data name="DashboardResetCaption" xml:space="preserve"><value>按本地时间显示</value></data>
   <data name="DashboardSamplesCaption" xml:space="preserve"><value>归档 {0} · 待归因 {1}</value></data>
   <data name="DashboardConnectionCaption" xml:space="preserve"><value>最近更新 {0:T}</value></data>
@@ -338,7 +338,7 @@ points 是导出点数，observations 仅为已提交增量；received 是接收
   <data name="OtelServerTransportUnconfirmed" xml:space="preserve"><value>当前指标及 WebSocket 时序证据均未收到；不能仅据此判定是 HTTP 传输，需检查客户端导出。</value></data>
   <data name="OtelTransportPoints" xml:space="preserve"><value>WS 导出点 {0:N0} · timing 导出点 {1:N0}（非请求数）</value></data>
   <data name="SpeedStreamingTps" xml:space="preserve"><value>流式阶段估计 TPS</value></data>
-  <data name="SpeedMatchedEffectiveTps" xml:space="preserve"><value>同批响应有效 TPS</value></data>
+  <data name="SpeedMatchedEffectiveTps" xml:space="preserve"><value>同批响应端到端 TPS</value></data>
   <data name="SpeedSameSamplesNote" xml:space="preserve"><value>仅与流式估计的同一批响应比较，包含前置等待</value></data>
   <data name="SpeedStreamingCount" xml:space="preserve"><value>流式有效 / 总样本</value></data>
   <data name="SpeedStreamingCoverage" xml:space="preserve"><value>当前视野流式覆盖：{0:N0} / {1:N0} 次有效响应（{2:N1}%）；两种估值使用同批样本。</value></data>
@@ -355,4 +355,37 @@ points 是导出点数，observations 仅为已提交增量；received 是接收
   <data name="SpeedStreamReason_short_stream" xml:space="preserve"><value>流式时长未达阈值</value></data>
   <data name="SpeedStreamReason_retried" xml:space="preserve"><value>响应含失败或重试</value></data>
   <data name="OfficialLongContextUnavailable" xml:space="preserve"><value>有 {0} 个样本缺少长上下文对比价格，仅参与基础计费；对比金额显示为 —。</value></data>
+  <data name="UxResetView" xml:space="preserve"><value>恢复所选范围</value></data>
+  <data name="UxClearFilters" xml:space="preserve"><value>清除筛选</value></data>
+  <data name="UxDetails" xml:space="preserve"><value>口径与采集详情</value></data>
+  <data name="UxScope" xml:space="preserve"><value>图表视野：{0:MM-dd HH:mm:ss} — {1:MM-dd HH:mm:ss} · 明细范围：{2}</value></data>
+  <data name="UxAllResponses" xml:space="preserve"><value>全部 {0} 次响应 · 含思考与前置等待</value></data>
+  <data name="UxMatchedResponses" xml:space="preserve"><value>同一批 {0} 次响应 · 含前置等待</value></data>
+  <data name="UxStreamResponses" xml:space="preserve"><value>仅 {0}/{1} 次响应 · 不代表全部请求</value></data>
+  <data name="UxSpeedCoverage" xml:space="preserve"><value>响应 {0} 次 · 流式证据 {1}/{0}（{2:N1}%）· 非推理输出 {3} TPS · 图表指标：{4}</value></data>
+  <data name="UxSpeedEmpty" xml:space="preserve"><value>当前范围或筛选下没有有效响应。可清除筛选或扩大明细范围。</value></data>
+  <data name="UxStreamEmpty" xml:space="preserve"><value>有 {0} 次响应，但没有足够的流式计时证据。可查看总输出 TPS，或展开详情检查排除原因。</value></data>
+  <data name="UxUseTotal" xml:space="preserve"><value>查看总输出 TPS</value></data>
+  <data name="UxModel" xml:space="preserve"><value>模型</value></data>
+  <data name="UxMetric" xml:space="preserve"><value>图表指标</value></data>
+  <data name="UxEstimateReady" xml:space="preserve"><value>估算已追平当前用量 · 数据截至 {0:MM-dd HH:mm} · {1} 个贡献样本</value></data>
+  <data name="UxEstimateBehind" xml:space="preserve"><value>用量尚未完全归因 · 已计算至 {0:N1}% / 账号已用 {1:N1}% · 数据截至 {2:MM-dd HH:mm}</value></data>
+  <data name="UxEstimateWaiting" xml:space="preserve"><value>依据不足 · 等待可计价的用量变化区间，或扩大图表范围查看历史</value></data>
+  <data name="UxEstimateOffline" xml:space="preserve"><value>额度连接中断 · 当前显示已保存的估算，最新账号用量尚未确认</value></data>
+  <data name="UxEstimateRepricing" xml:space="preserve"><value>正在重新计价 · 完成前保留旧价格结果</value></data>
+  <data name="UxEstimateHistory" xml:space="preserve"><value>正在查看历史范围 · 估算截至 {0:MM-dd HH:mm} · {1} 个贡献样本</value></data>
+  <data name="UxEstimateQueryWaiting" xml:space="preserve"><value>最新账号用量尚未确认 · 当前显示已有日志与估算</value></data>
+  <data name="UxDraft" xml:space="preserve"><value>有未保存更改 · 隐藏窗口或切页会保留本次草稿</value></data>
+  <data name="UxSaved" xml:space="preserve"><value>设置已保存</value></data>
+  <data name="UxAdvanced" xml:space="preserve"><value>显示高级设置</value></data>
+  <data name="UxRegressionLinear" xml:space="preserve"><value>线性回归：观察长期方向；样本数越大，短期变化越平滑。</value></data>
+  <data name="UxRegressionSegmented" xml:space="preserve"><value>分段窗口：按时间段分别估算；窗口越短，对近期变化越敏感。</value></data>
+  <data name="UxRegressionGaussian" xml:space="preserve"><value>高斯聚合：近期样本权重更高；带宽越大，结果越平滑。</value></data>
+  <data name="UxLongContextHint" xml:space="preserve"><value>仅增加一套长上下文加价对比。关闭时，基础估算继续使用标准 API 价格。</value></data>
+  <data name="UxOtelNoEvents" xml:space="preserve"><value>当前范围没有该指标。可清除筛选、扩大范围，或查看采集详情；仅配置输出不代表已经收到数据。</value></data>
+  <data name="UxOtelRequestsOnly" xml:space="preserve"><value>已收到请求记录，但没有当前指标数值。可切换请求 TTFT 或查看采集详情；不能据此断定服务端原因。</value></data>
+  <data name="UxOtelBaseline" xml:space="preserve"><value>已收到累计指标的基线，等待下一次增量上报。可查看采集详情确认进展。</value></data>
+  <data name="UxUseRequestTtft" xml:space="preserve"><value>查看请求 TTFT</value></data>
+  <data name="UxKeyboardChart" xml:space="preserve"><value>左右键平移；加减键缩放；Home 恢复所选范围。鼠标悬停查看点明细。</value></data>
+  <data name="UxGridRange" xml:space="preserve"><value>明细范围：{0} · 缩放不改变下表</value></data>
 </root>

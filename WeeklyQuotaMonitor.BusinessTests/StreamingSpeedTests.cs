@@ -96,7 +96,7 @@ internal static class StreamingSpeedTests
             "流式主卡未使用流式耗时。");
         Check(Find<MetricCard>(panel).Any(c => c.AccessibleName!.StartsWith(UiText.Get("SpeedMatchedEffectiveTps") + ": " + 20d.ToString("N2"))),
             "对照卡不是同批样本。");
-        Check(Find<MetricCard>(panel).Any(c => c.AccessibleName!.Contains("1 / 3")), "覆盖卡计数与图表不一致。");
+        Check(Find<Label>(panel).Any(c => c.Name == "SpeedCoverageSummary" && c.Text.Contains("1/3")), "覆盖计数与图表不一致。");
         Check(grid.Rows.Count == 2 && grid.Columns.Cast<DataGridViewColumn>().Any(c => c.DataPropertyName == "StreamingExclusions"),
             "表格丢弃缺失桶或没有排除原因。");
         Find<ComboBox>(panel).Single(c => c.Name == "SpeedTierFilter").SelectedIndex = 2;

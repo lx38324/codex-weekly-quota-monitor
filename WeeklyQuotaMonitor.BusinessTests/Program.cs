@@ -66,10 +66,18 @@ internal static class Program
         var workerArguments = GuiTestDesktop.Enter(arguments);
         if (workerArguments is null) return;
         arguments = workerArguments;
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
         UiText.SetLanguage(UiLanguage.ChineseSimplified);
         AppTheme.Set(UiTheme.Light);
         if (arguments.Length > 0)
         {
+            if (arguments.Length == 1 && arguments[0] == "--test-dashboard-usability")
+            { TestDashboardFitsReportedViewport(); TestDashboardFitsHighScaleScreenshotViewport(); TestCustomTimeWindows(); TestIndependentTableRangesAndDayStart(); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-telemetry-recovery") { TelemetryTests.VerifyMissingServiceTiming(); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-usability") { UsabilityTests.Run(); return; }
+            if (arguments.Length == 2 && arguments[0] == "--capture-usability") { UsabilityTests.Run(arguments[1]); return; }
             if (arguments.Length == 1 && arguments[0] == "--test-long-context-independence") { LongContextIndependenceTests.Run(); return; }
             if (arguments.Length == 2 && arguments[0] == "--audit-long-context-independence") { LongContextIndependenceTests.Audit(arguments[1]); return; }
             if (arguments.Length == 1 && arguments[0] == "--test-terra-quota-display") { Gpt61TerraTests.Run(); QuotaDisplayFilterTests.Run(); return; }
@@ -130,6 +138,7 @@ internal static class Program
         var tests = new Action[]
         {
             GuiTestDesktop.VerifyIsolation,
+            () => UsabilityTests.Run(),
             StartupTests.Run,
             RequestTelemetryTests.Run,
             BackgroundPerformanceTests.Run,
@@ -1578,7 +1587,7 @@ internal static class Program
         FindControls<DateTimePicker>(speedWindow).Single(p => p.Name == "WindowEnd").Value = end.AddSeconds(1).LocalDateTime;
         speedWindow.ApplyWindow();
         Equal(speedWindow.Start, requested!.Value, "更早时间必须通知协调器补读");
-        Equal(true, FindControls<MetricCard>(panel).Single(card => card.Tone == MetricCardTone.Purple).AccessibleName!.Contains(": 3."), "窗口指标卡显示3次响应");
+        Equal(true, FindControls<Label>(panel).Single(label => label.Name == "SpeedCoverageSummary").Text.Contains("0/3"), "窗口覆盖显示3次响应且不伪造流式证据");
         Equal(3, FindControls<DataGridView>(panel).Single().Rows.Cast<DataGridViewRow>().Sum(row => Convert.ToInt32(row.Cells[4].Value)), "明细与指标卡一致");
     }
 
@@ -1598,29 +1607,29 @@ internal static class Program
         var chart = FindControls<QuotaChartControl>(form).Single();
         RenderInteractiveChart(chart);
         var initial = chart.Navigation.Window!.Value;
-        var x = 76 + (chart.Width - 104) / 2;
-        SendChartMouse(chart, "OnMouseWheel", new HandledMouseEventArgs(MouseButtons.None, 0, x, 60, 480));
+        var plot = ReadChartPlot(chart); var x = (int)(plot.Left + plot.Width / 2); var y = (int)(plot.Top + plot.Height / 2);
+        SendChartMouse(chart, "OnMouseWheel", new HandledMouseEventArgs(MouseButtons.None, 0, x, y, 480));
         var zoomed = chart.Navigation.Window!.Value;
         Equal(true, zoomed.End - zoomed.Start < initial.End - initial.Start, "滚轮放大必须缩短实际窗口");
         var expected = points.Count(point => point.Timestamp >= zoomed.Start && point.Timestamp <= zoomed.End);
         Equal(true, expected > 0 && expected < points.Length, "缩放场景应筛掉部分样本");
         Equal(expected, chart.CurrentContributions.Count, "缩放后额度回归贡献必须重算");
         Equal(points.Length, FindControls<DataGridView>(form).Single().Rows.Count, "额度表格不被缩放裁剪");
-        var expectedZoom = ChartTimeNavigation.Zoom(initial, (x - 76d) / (chart.Width - 104), Math.Pow(1.2, -4));
+        var expectedZoom = ChartTimeNavigation.Zoom(initial, (x - plot.Left) / plot.Width, Math.Pow(1.2, -4));
         Equal(true, Math.Abs((expectedZoom.Start - zoomed.Start).TotalMilliseconds) <= 1, "鼠标锚点须用于时间缩放");
         RenderInteractiveChart(chart);
-        SendChartMouse(chart, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, x, 60, 0));
-        SendChartMouse(chart, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, x + 100, 60, 0));
+        SendChartMouse(chart, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, x, y, 0));
+        SendChartMouse(chart, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, x + 100, y, 0));
         var panned = chart.Navigation.Window!.Value;
         Equal(zoomed.End - zoomed.Start, panned.End - panned.Start, "平移保持时间跨度不变");
         Equal(true, panned.Start < zoomed.Start, "向右拖动应查看更早时间");
         Equal(points.Count(point => point.Timestamp >= panned.Start && point.Timestamp <= panned.End), chart.CurrentContributions.Count, "平移后回归与窗口一致");
-        SendChartMouse(chart, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, x, 60, 0));
-        SendChartMouse(chart, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, x + chart.Width * 20, 60, 0));
+        SendChartMouse(chart, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, x, y, 0));
+        SendChartMouse(chart, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, x + chart.Width * 20, y, 0));
         Equal(true, chart.Navigation.Window!.Value.Start >= points[0].Timestamp, "向过去拖动不得越过已有采样边界");
         Equal(true, chart.CurrentContributions.Count > 0, "整窗拖出历史数据时应停在边界");
         RenderInteractiveChart(chart);
-        SendChartMouse(chart, "OnMouseDoubleClick", new MouseEventArgs(MouseButtons.Left, 2, x, 60, 0));
+        SendChartMouse(chart, "OnMouseDoubleClick", new MouseEventArgs(MouseButtons.Left, 2, x, y, 0));
         Equal(10, chart.CurrentContributions.Count, "边界处仍可双击恢复初始全部范围");
 
         form.ShowSpeedTab();
@@ -1628,8 +1637,8 @@ internal static class Program
         FindControls<ComboBox>(panel).Single(box => box.Name == "SpeedRange").SelectedIndex = 0;
         var speedChart = FindControls<SpeedChartControl>(panel).Single();
         Application.DoEvents(); RenderInteractiveChart(speedChart);
-        var speedX = 64 + (speedChart.Width - 84) / 2;
-        SendChartMouse(speedChart, "OnMouseWheel", new HandledMouseEventArgs(MouseButtons.None, 0, speedX, 80, 480));
+        var speedPlot = ReadChartPlot(speedChart); var speedX = (int)(speedPlot.Left + speedPlot.Width / 2);
+        SendChartMouse(speedChart, "OnMouseWheel", new HandledMouseEventArgs(MouseButtons.None, 0, speedX, (int)(speedPlot.Top + speedPlot.Height / 2), 480));
         var speedWindow = speedChart.Navigation.Window!.Value;
         var visibleResponses = speed.Where(sample => sample.EndedAt >= speedWindow.Start && sample.EndedAt <= speedWindow.End).ToArray();
         Equal(true, visibleResponses.Length > 0 && visibleResponses.Length < 10, "速度图实际缩放而不是仅放大外观");
@@ -1670,8 +1679,8 @@ internal static class Program
         var chart = FindControls<QuotaChartControl>(form).Single();
         var grid = FindControls<DataGridView>(form).Single();
         SelectTimeRange(range, "TimeRangeAll"); RenderInteractiveChart(chart);
-        var x = 76 + (chart.Width - 104) / 2;
-        SendChartMouse(chart, "OnMouseWheel", new HandledMouseEventArgs(MouseButtons.None, 0, x, 60, 480));
+        var plot = ReadChartPlot(chart); var x = (int)(plot.Left + plot.Width / 2);
+        SendChartMouse(chart, "OnMouseWheel", new HandledMouseEventArgs(MouseButtons.None, 0, x, (int)(plot.Top + plot.Height / 2), 480));
         var zoomed = chart.Navigation.Window!.Value;
         var latest = CurrentSample(now, 2100) with { UsedPercent = 36 };
         view = view with { Samples = points.Append(latest).ToArray() };
@@ -1777,6 +1786,13 @@ internal static class Program
     {
         using var bitmap = new Bitmap(chart.Width, chart.Height);
         chart.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+    }
+
+    /// <summary>从图表已经绘制的交互区域取点，避免DPI或图例布局改变后仍向绘图区外发送鼠标事件。</summary>
+    private static RectangleF ReadChartPlot(Control chart)
+    {
+        var navigation = chart is QuotaChartControl quota ? quota.Navigation : ((SpeedChartControl)chart).Navigation;
+        return (RectangleF)typeof(ChartTimeNavigation).GetField("_plot", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(navigation)!;
     }
 
     /// <summary>按用户可见的本地化范围选择操作控件，避免新增选项后依赖固定序号。</summary>

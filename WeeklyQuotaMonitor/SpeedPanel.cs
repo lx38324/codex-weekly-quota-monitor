@@ -6,13 +6,19 @@ namespace WeeklyQuotaMonitor;
 public sealed class SpeedPanel : UserControl
 {
     private readonly Label _title = new() { AutoSize = true, Margin = new Padding(0, 0, 0, 12) };
-    private readonly MetricCard _total = new(MetricCardTone.Primary, MetricCardStyle.Hero);
+    private readonly MetricCard _total = new(MetricCardTone.Primary);
     private readonly MetricCard _visible = new(MetricCardTone.Positive);
     private readonly MetricCard _count = new(MetricCardTone.Purple);
     private readonly ToolTip _tips = new();
     private readonly TableLayoutPanel _layout = new() { Dock = DockStyle.Top, ColumnCount = 1, RowCount = 8, MinimumSize = new Size(0, 610) };
     private readonly Label _note = new() { AutoSize = true, Margin = new Padding(0, 0, 0, 12) };
     private readonly Label _status = new() { AutoSize = true, Margin = new Padding(0, 10, 0, 0) };
+    private readonly Label _coverage = new() { Name = "SpeedCoverageSummary", AutoSize = true };
+    private readonly Label _empty = new() { Name = "SpeedEmptyState", AutoSize = true, Visible = false };
+    private readonly Button _reset = new() { Name = "SpeedResetView", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+    private readonly Button _clear = new() { Name = "SpeedClearFilters", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+    private readonly CheckBox _details = new() { Name = "SpeedShowDetails", AutoSize = true };
+    private readonly LinkLabel _useTotal = new() { Name = "SpeedUseTotal", AutoSize = true, Visible = false };
     private readonly DataGridView _grid = new()
     {
         Name = "SpeedGrid", Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false,
@@ -26,9 +32,9 @@ public sealed class SpeedPanel : UserControl
     };
     private readonly Dictionary<DataGridViewColumn, string> _keys = [];
     private readonly SpeedChartControl _chart = new();
-    private readonly ComboBox _model = new() { Name = "SpeedModelFilter", DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
-    private readonly ComboBox _tier = new() { Name = "SpeedTierFilter", DropDownStyle = ComboBoxStyle.DropDownList, Width = 230, FlatStyle = FlatStyle.Flat };
-    private readonly ComboBox _metric = new() { Name = "SpeedMetric", DropDownStyle = ComboBoxStyle.DropDownList, Width = 250 };
+    private readonly ComboBox _model = new() { Name = "SpeedModelFilter", DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+    private readonly ComboBox _tier = new() { Name = "SpeedTierFilter", DropDownStyle = ComboBoxStyle.DropDownList, Width = 190, FlatStyle = FlatStyle.Flat };
+    private readonly ComboBox _metric = new() { Name = "SpeedMetric", DropDownStyle = ComboBoxStyle.DropDownList, Width = 190 };
     private readonly ComboBox _range = new() { Name = "SpeedRange", DropDownStyle = ComboBoxStyle.DropDownList, Width = 150, FlatStyle = FlatStyle.Flat };
     private readonly Label _rangeLabel = new() { AutoSize = true, Margin = new Padding(0, 7, 6, 0) };
     private ChartTimeWindow? _interactiveWindow;
@@ -56,8 +62,8 @@ public sealed class SpeedPanel : UserControl
         var layout = _layout;
         layout.ColumnStyles.Add(new(SizeType.Percent, 100));
         for (var i = 0; i < 5; i++) layout.RowStyles.Add(new(SizeType.AutoSize));
-        layout.RowStyles.Add(new(SizeType.Percent, 64));
-        layout.RowStyles.Add(new(SizeType.Percent, 36));
+        layout.RowStyles.Add(new(SizeType.Percent, 55));
+        layout.RowStyles.Add(new(SizeType.Percent, 45));
         layout.RowStyles.Add(new(SizeType.AutoSize));
         var filters = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8) };
         filters.Controls.AddRange([_rangeLabel, _range, _model, _tier, _metric]);
@@ -69,13 +75,22 @@ public sealed class SpeedPanel : UserControl
         _window.WindowApplied += ChangeRange;
         _chart.Navigation.WindowChanged += window =>
         {
-            _interactiveWindow = window; HistoryRequested?.Invoke(window.Start); RefreshFilteredData();
+            _interactiveWindow = window; HistoryRequested?.Invoke(window.Start); RefreshFilteredData(refreshTable: false);
         };
         _chart.Navigation.ResetRequested += ChangeRange;
         var cards = new DashboardCardGrid { WrapWhenNarrow = true, Margin = new Padding(0, 8, 0, 8) };
         cards.SetCards(_total, _visible, _count);
-        layout.Controls.Add(_title, 0, 0); layout.Controls.Add(filters, 0, 1); layout.Controls.Add(_window, 0, 2);
-        layout.Controls.Add(cards, 0, 3); layout.Controls.Add(_note, 0, 4);
+        var heading = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
+        heading.Controls.AddRange([_title, _reset, _clear, _details]);
+        var context = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 1 };
+        context.Controls.Add(_coverage); context.Controls.Add(_note); context.Controls.Add(_empty); context.Controls.Add(_useTotal);
+        _reset.Click += (_, _) => ChangeRange();
+        _clear.Click += (_, _) => ClearFilters();
+        _details.CheckedChanged += (_, _) => { _status.Visible = _details.Checked; PerformLayout(); };
+        _status.Visible = false;
+        _useTotal.LinkClicked += (_, _) => _metric.SelectedIndex = 0;
+        layout.Controls.Add(heading, 0, 0); layout.Controls.Add(filters, 0, 1); layout.Controls.Add(_window, 0, 2);
+        layout.Controls.Add(cards, 0, 3); layout.Controls.Add(context, 0, 4);
         layout.Controls.Add(_chart, 0, 5); layout.Controls.Add(_grid, 0, 6); layout.Controls.Add(_status, 0, 7);
         Controls.Add(layout);
         AddColumn("SpeedStart", nameof(Row.Start), "MM-dd HH:mm:ss");
@@ -91,13 +106,14 @@ public sealed class SpeedPanel : UserControl
         AddColumn("SpeedStreamingExclusions", nameof(Row.StreamingExclusions));
         AddColumn("SpeedBucketStatus", nameof(Row.Status));
         _grid.DefaultCellStyle.Padding = new Padding(4);
+        _grid.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.False;
     }
 
     /// <summary>按换行筛选器、说明和指标卡的实际高度预留绘图空间，高 DPI 不挤掉图表。</summary>
     protected override void OnLayout(LayoutEventArgs e)
     {
         var width = Math.Max(1, ClientSize.Width - Padding.Horizontal - 8);
-        foreach (var label in new[] { _title, _note, _status }) label.MaximumSize = new Size(width, 0);
+        foreach (var label in new[] { _title, _note, _status, _coverage, _empty }) label.MaximumSize = new Size(width, 0);
         var required = 420 * DeviceDpi / 96;
         foreach (var row in new[] { 0, 1, 2, 3, 4, 7 })
         {
@@ -115,6 +131,10 @@ public sealed class SpeedPanel : UserControl
     {
         _title.Text = UiText.Get("SpeedTitle");
         _rangeLabel.Text = UiText.Get("ChartInitialRange");
+        _reset.Text = UiText.Get("UxResetView"); _clear.Text = UiText.Get("UxClearFilters");
+        _details.Text = UiText.Get("UxDetails"); _useTotal.Text = UiText.Get("UxUseTotal");
+        _model.AccessibleName = UiText.Get("UxModel"); _metric.AccessibleName = UiText.Get("UxMetric");
+        _range.AccessibleName = UiText.Get("ChartInitialRange");
         _samples = SpeedDisplayFilter.VisibleSamples(view.SpeedSamples); _options = options;
         _dayStartMinutes = dayStartMinutes;
         var models = _samples.Select(sample => sample.Model).Distinct().OrderBy(model => model).ToArray();
@@ -138,6 +158,7 @@ public sealed class SpeedPanel : UserControl
             _range.SelectedIndex = selectedRange; _window.ApplyLanguage();
         }
         _binding = false;
+        foreach (var choice in new[] { _model, _tier, _metric, _range }) FitChoice(choice);
         _note.Text = UiText.Get("SpeedShortNote");
         _tips.SetToolTip(_note, UiText.Get("SpeedMeasurementNote") + "\n" + UiText.Get("SpeedTtftUnavailable"));
         var from = _samples.Count == 0 ? "—" : _samples.Min(sample => sample.EndedAt).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
@@ -151,6 +172,14 @@ public sealed class SpeedPanel : UserControl
         _note.ForeColor = AppTheme.Current.MutedText;
         _grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = AppTheme.Current.SurfaceAlternate;
         _grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = AppTheme.Current.Text;
+    }
+
+    /// <summary>按最长本地化选项测量选择框，避免窄框把当前模式或指标名称截断；空间不足时由筛选条换行。</summary>
+    private static void FitChoice(ComboBox choice)
+    {
+        var textWidth = choice.Items.Cast<object>().Select(item => TextRenderer.MeasureText(item.ToString(), choice.Font).Width).DefaultIfEmpty(100).Max();
+        choice.Width = textWidth + 34 * choice.DeviceDpi / 96;
+        choice.DropDownWidth = choice.Width;
     }
 
     /// <summary>用户改变范围时请求更早的日志，界面刷新不重复触发补读。</summary>
@@ -177,8 +206,8 @@ public sealed class SpeedPanel : UserControl
         _ => throw new InvalidOperationException("未选择有效的速度时间范围。")
     };
 
-    /// <summary>聚合视野与独立表格范围；流式估值及对照仅用同批有效响应，显示覆盖率和排除原因。</summary>
-    private void RefreshFilteredData()
+    /// <summary>固定三张卡的统计语义；缩放只重算视野，不重复聚合独立表格，缺失流式证据提供恢复入口。</summary>
+    private void RefreshFilteredData(bool refreshTable = true)
     {
         if (_binding) return;
         var now = DateTimeOffset.Now;
@@ -198,7 +227,7 @@ public sealed class SpeedPanel : UserControl
         var window = _chart.Navigation.SetWindow(visibleStart, end);
         start = visibleStart = window.Start; end = window.End;
         if (_interactiveWindow.HasValue) _interactiveWindow = window;
-        _note.Text = UiText.Format("ChartInteractionHint", visibleStart.LocalDateTime, end.LocalDateTime) + "\n" + UiText.Get("SpeedShortNote") + " " + UiText.Get("ChartTableScopeHint");
+        _note.Text = UiText.Format("UxScope", visibleStart.LocalDateTime, end.LocalDateTime, _range.Text);
         _status.Text = _dataStatus + ((_range.SelectedIndex != 0 || _interactiveWindow.HasValue) && requestedStart < _coverageStart ? "\n" + UiText.Get("SpeedWindowLoading") : string.Empty);
         var buckets = SpeedMonitoring.Aggregate(modelSamples, _options, now, start, end);
         var filtered = buckets.Where(bucket => _model.SelectedIndex <= 0 || bucket.Model == _model.SelectedItem as string)
@@ -209,17 +238,19 @@ public sealed class SpeedPanel : UserControl
         var streamCount = filtered.Sum(b => b.StreamingCount); var allCount = filtered.Sum(b => b.Count);
         var streamSeconds = filtered.Sum(b => b.StreamingSeconds);
         var matchedSeconds = filtered.Sum(b => b.MatchedEffectiveSeconds);
-        _total.SetContent(UiText.Get(streaming ? "SpeedStreamingTps" : "SpeedTotalTps"),
-            streaming ? streamSeconds > 0 ? $"{filtered.Sum(b => b.StreamingOutputTokens) / streamSeconds:N2}" : "—" :
-                seconds > 0 ? $"{filtered.Sum(bucket => bucket.OutputTokens) / seconds:N2}" : "—", scope + " · " + UiText.Get("SpeedWindowWeighted"));
-        _visible.SetContent(UiText.Get(streaming ? "SpeedMatchedEffectiveTps" : "SpeedVisibleTps"),
-            streaming ? matchedSeconds > 0 ? $"{filtered.Sum(b => b.StreamingOutputTokens) / matchedSeconds:N2}" : "—" :
-                seconds > 0 ? $"{filtered.Sum(bucket => bucket.VisibleTokens) / seconds:N2}" : "—",
-            UiText.Get(streaming ? "SpeedSameSamplesNote" : "SpeedVisibleCaption"));
-        _count.SetContent(UiText.Get(streaming ? "SpeedStreamingCount" : "SpeedSamples"),
-            streaming ? $"{streamCount:N0} / {allCount:N0}" : allCount.ToString("N0"),
-            streaming ? UiText.Format("SpeedStreamingCoverage", streamCount, allCount, allCount > 0 ? 100d * streamCount / allCount : 0) :
-                UiText.Format("SpeedGroupCaption", filtered.Length, filtered.Select(bucket => bucket.Model).Distinct().Count()));
+        _total.SetContent(UiText.Get("SpeedTotalTps"),
+            seconds > 0 ? $"{filtered.Sum(b => b.OutputTokens) / seconds:N2}" : "—", UiText.Format("UxAllResponses", allCount));
+        _visible.SetContent(UiText.Get("SpeedStreamingTps"),
+            streamSeconds > 0 ? $"{filtered.Sum(b => b.StreamingOutputTokens) / streamSeconds:N2}" : "—",
+            UiText.Format("UxStreamResponses", streamCount, allCount));
+        _count.SetContent(UiText.Get("SpeedMatchedEffectiveTps"),
+            matchedSeconds > 0 ? $"{filtered.Sum(b => b.StreamingOutputTokens) / matchedSeconds:N2}" : "—",
+            UiText.Format("UxMatchedResponses", streamCount));
+        _coverage.Text = UiText.Format("UxSpeedCoverage", allCount, streamCount, allCount > 0 ? 100d * streamCount / allCount : 0,
+            seconds > 0 ? $"{filtered.Sum(b => b.VisibleTokens) / seconds:N2}" : "—", _metric.Text);
+        _empty.Visible = allCount == 0 || streaming && streamCount == 0;
+        _empty.Text = allCount == 0 ? UiText.Get("UxSpeedEmpty") : UiText.Format("UxStreamEmpty", allCount);
+        _useTotal.Visible = allCount > 0 && streaming && streamCount == 0;
         _status.Text += "\n" + UiText.Format("SpeedTierScope", scope,
             filtered.Where(b => b.ServiceTier == "standard").Sum(b => b.Count),
             filtered.Where(b => b.ServiceTier == "fast").Sum(b => b.Count),
@@ -227,14 +258,13 @@ public sealed class SpeedPanel : UserControl
         if (SelectedTier == "unknown" || filtered.Any(b => b.ServiceTier == "unknown"))
             _status.Text += "\n" + UiText.Get("SpeedUnknownNote");
         _status.Text += "\n" + UiText.Format("SpeedStreamingCoverage", streamCount, allCount, allCount > 0 ? 100d * streamCount / allCount : 0);
-        if (streaming)
-        {
-            _note.Text += "\n" + UiText.Get("SpeedStreamingNote");
-            var exclusions = filtered.SelectMany(b => b.StreamingExclusions).GroupBy(p => p.Key)
-                .ToDictionary(g => g.Key, g => g.Sum(p => p.Value));
-            _status.Text += "\n" + UiText.Get("SpeedStreamingExclusions") + ": " + ExclusionText(exclusions);
-        }
+        var exclusions = filtered.SelectMany(b => b.StreamingExclusions).GroupBy(p => p.Key)
+            .ToDictionary(g => g.Key, g => g.Sum(p => p.Value));
+        _status.Text += "\n" + UiText.Get("SpeedStreamingExclusions") + ": " + ExclusionText(exclusions) + "\n" +
+            UiText.Get("SpeedMeasurementNote") + "\n" + UiText.Get("SpeedStreamingNote") + "\n" +
+            UiText.Get("SpeedTtftUnavailable") + "\n" + UiText.Get("UxKeyboardChart");
         _chart.SetData(filtered, _models, _metric.SelectedIndex == 1, streaming);
+        if (!refreshTable) return;
         var tableBuckets = SpeedMonitoring.Aggregate(modelSamples, _options, now, tableStart, tableEnd)
             .OrderByDescending(bucket => bucket.End).ThenBy(bucket => bucket.Model).ToArray();
         var rows = tableBuckets.Select(bucket => new Row(bucket.Start.LocalDateTime,
@@ -244,6 +274,13 @@ public sealed class SpeedPanel : UserControl
             UiText.Get(bucket.Complete ? "SpeedComplete" : "SpeedPartial"))).ToArray();
         if (_grid.DataSource is null || !_tableRows.SequenceEqual(rows))
         { _grid.DataSource = rows; _tableRows = rows; _grid.ClearSelection(); }
+    }
+
+    /// <summary>只清除模型与速度筛选，保留用户选择的明细时间范围，并恢复相应图表初始视野。</summary>
+    private void ClearFilters()
+    {
+        _binding = true; _model.SelectedIndex = 0; _tier.SelectedIndex = 0; _binding = false;
+        ChangeRange();
     }
 
     /// <summary>把固定缺失原因及数量本地化，零缺失明确显示无；不隐去没有流式观测的桶。</summary>
@@ -256,6 +293,7 @@ public sealed class SpeedPanel : UserControl
     {
         var width = property == nameof(Row.StreamingExclusions) ? 220 :
             property is nameof(Row.Start) or nameof(Row.End) ? 135 : property is nameof(Row.Model) or nameof(Row.Tier) ? 130 : 80;
+        width = Math.Max(width * DeviceDpi / 96, TextRenderer.MeasureText(UiText.Get(key), _grid.Font).Width + 24);
         var column = new DataGridViewTextBoxColumn { DataPropertyName = property, HeaderText = UiText.Get(key), MinimumWidth = width, FillWeight = width };
         column.DefaultCellStyle.Format = format;
         if (property is nameof(Row.Tier) or nameof(Row.StreamingExclusions)) column.DefaultCellStyle.WrapMode = DataGridViewTriState.True;

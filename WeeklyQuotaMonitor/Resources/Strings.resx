@@ -115,7 +115,7 @@ Table (selected range): {3} points · view {4} · archived {5} · pending {6}{7}
   <data name="PricingShortContext" xml:space="preserve"><value>Short-context prices (USD / 1M tokens)</value></data>
   <data name="PricingLongContext" xml:space="preserve"><value>Long-context prices (USD / 1M tokens)</value></data>
   <data name="PricingLongPricing" xml:space="preserve"><value>Long-context tier</value></data>
-  <data name="PricingLongEnabled" xml:space="preserve"><value>Enable long-context pricing</value></data>
+  <data name="PricingLongEnabled" xml:space="preserve"><value>Provide optional comparison prices (basic pricing stays Standard)</value></data>
   <data name="PricingThreshold" xml:space="preserve"><value>Long-context threshold (input tokens)</value></data>
   <data name="PricingInput" xml:space="preserve"><value>Uncached input</value></data>
   <data name="PricingCachedInput" xml:space="preserve"><value>Cached input</value></data>
@@ -173,7 +173,7 @@ Table (selected range): {3} points · view {4} · archived {5} · pending {6}{7}
   <data name="DiagnosticsCopy" xml:space="preserve"><value>Copy diagnostics</value></data>
   <data name="DiagnosticsCopied" xml:space="preserve"><value>Diagnostics copied to the clipboard.</value></data>
   <data name="TooltipFormat" xml:space="preserve"><value>Quota {0} | used {1} | {2} samples</value></data>
-  <data name="DashboardCurrentWindow" xml:space="preserve"><value>Current authoritative weekly window</value></data>
+  <data name="DashboardCurrentWindow" xml:space="preserve"><value>Current account week</value></data>
   <data name="DashboardResetCaption" xml:space="preserve"><value>Shown in local time</value></data>
   <data name="DashboardSamplesCaption" xml:space="preserve"><value>Archived {0} · pending {1}</value></data>
   <data name="DashboardConnectionCaption" xml:space="preserve"><value>Last updated {0:T}</value></data>
@@ -338,7 +338,7 @@ Points are exported points, observations are committed increments only. Received
   <data name="OtelServerTransportUnconfirmed" xml:space="preserve"><value>No service metric or WebSocket timing evidence received. This alone does not establish HTTP transport; inspect client export.</value></data>
   <data name="OtelTransportPoints" xml:space="preserve"><value>WS export points {0:N0} · timing export points {1:N0} (not request counts)</value></data>
   <data name="SpeedStreamingTps" xml:space="preserve"><value>Estimated streaming TPS</value></data>
-  <data name="SpeedMatchedEffectiveTps" xml:space="preserve"><value>Matched effective TPS</value></data>
+  <data name="SpeedMatchedEffectiveTps" xml:space="preserve"><value>Matched end-to-end TPS</value></data>
   <data name="SpeedSameSamplesNote" xml:space="preserve"><value>Same responses as streaming estimate, including pre-item wait</value></data>
   <data name="SpeedStreamingCount" xml:space="preserve"><value>Streaming / total samples</value></data>
   <data name="SpeedStreamingCoverage" xml:space="preserve"><value>Viewport streaming coverage: {0:N0} / {1:N0} valid responses ({2:N1}%); both estimates use matched samples.</value></data>
@@ -355,4 +355,37 @@ Points are exported points, observations are committed increments only. Received
   <data name="SpeedStreamReason_short_stream" xml:space="preserve"><value>Streaming duration below threshold</value></data>
   <data name="SpeedStreamReason_retried" xml:space="preserve"><value>Error or retry in response</value></data>
   <data name="OfficialLongContextUnavailable" xml:space="preserve"><value>{0} samples lack long-context comparison prices and contribute to base pricing only; comparison amounts show —.</value></data>
+  <data name="UxResetView" xml:space="preserve"><value>Reset selected range</value></data>
+  <data name="UxClearFilters" xml:space="preserve"><value>Clear filters</value></data>
+  <data name="UxDetails" xml:space="preserve"><value>Measurement and collection details</value></data>
+  <data name="UxScope" xml:space="preserve"><value>Chart: {0:MM-dd HH:mm:ss} — {1:MM-dd HH:mm:ss} · Table range: {2}</value></data>
+  <data name="UxAllResponses" xml:space="preserve"><value>All {0} responses · includes reasoning and initial wait</value></data>
+  <data name="UxMatchedResponses" xml:space="preserve"><value>Same {0} responses · includes initial wait</value></data>
+  <data name="UxStreamResponses" xml:space="preserve"><value>Only {0}/{1} responses · not all requests</value></data>
+  <data name="UxSpeedCoverage" xml:space="preserve"><value>{0} responses · streaming evidence {1}/{0} ({2:N1}%) · non-reasoning output {3} TPS · chart: {4}</value></data>
+  <data name="UxSpeedEmpty" xml:space="preserve"><value>No valid responses in this range or filter. Clear filters or select a wider table range.</value></data>
+  <data name="UxStreamEmpty" xml:space="preserve"><value>{0} responses, but no usable streaming timing evidence. View total output TPS or expand details for exclusion reasons.</value></data>
+  <data name="UxUseTotal" xml:space="preserve"><value>View total output TPS</value></data>
+  <data name="UxModel" xml:space="preserve"><value>Model</value></data>
+  <data name="UxMetric" xml:space="preserve"><value>Chart metric</value></data>
+  <data name="UxEstimateReady" xml:space="preserve"><value>Estimate covers current usage · data through {0:MM-dd HH:mm} · {1} contributing samples</value></data>
+  <data name="UxEstimateBehind" xml:space="preserve"><value>Usage not fully attributed · calculated {0:N1}% / account used {1:N1}% · data through {2:MM-dd HH:mm}</value></data>
+  <data name="UxEstimateWaiting" xml:space="preserve"><value>Insufficient evidence · waiting for a priceable usage interval; widen the chart range to inspect history</value></data>
+  <data name="UxEstimateOffline" xml:space="preserve"><value>Quota connection interrupted · showing saved estimates; latest account usage is unconfirmed</value></data>
+  <data name="UxEstimateRepricing" xml:space="preserve"><value>Repricing in progress · previous-price results remain until ready</value></data>
+  <data name="UxEstimateHistory" xml:space="preserve"><value>Historical chart range · estimate through {0:MM-dd HH:mm} · {1} contributing samples</value></data>
+  <data name="UxEstimateQueryWaiting" xml:space="preserve"><value>Latest account usage is unconfirmed · showing existing logs and estimates</value></data>
+  <data name="UxDraft" xml:space="preserve"><value>Unsaved changes · hiding or switching pages keeps this draft</value></data>
+  <data name="UxSaved" xml:space="preserve"><value>Settings saved</value></data>
+  <data name="UxAdvanced" xml:space="preserve"><value>Show advanced settings</value></data>
+  <data name="UxRegressionLinear" xml:space="preserve"><value>Linear regression shows the long-term direction. More samples smooth short-term changes.</value></data>
+  <data name="UxRegressionSegmented" xml:space="preserve"><value>Segmented windows estimate each time period separately. Shorter windows react more to recent changes.</value></data>
+  <data name="UxRegressionGaussian" xml:space="preserve"><value>Gaussian aggregation weights recent samples more. A wider bandwidth gives smoother estimates.</value></data>
+  <data name="UxLongContextHint" xml:space="preserve"><value>Adds an optional long-context surcharge comparison. Basic estimates continue to use Standard API prices when disabled.</value></data>
+  <data name="UxOtelNoEvents" xml:space="preserve"><value>No observations for this metric in the current range. Clear filters, widen the range, or inspect collection details; configuration alone does not confirm receipt.</value></data>
+  <data name="UxOtelRequestsOnly" xml:space="preserve"><value>Request events arrived, but no values for this metric. View request TTFT or collection details; this does not establish the server-side cause.</value></data>
+  <data name="UxOtelBaseline" xml:space="preserve"><value>A cumulative baseline arrived. Waiting for the next incremental report; collection details show progress.</value></data>
+  <data name="UxUseRequestTtft" xml:space="preserve"><value>View request TTFT</value></data>
+  <data name="UxKeyboardChart" xml:space="preserve"><value>Left/right: pan; plus/minus: zoom; Home: reset range. Hover for point details.</value></data>
+  <data name="UxGridRange" xml:space="preserve"><value>Table range: {0} · chart zoom does not change this table</value></data>
 </root>

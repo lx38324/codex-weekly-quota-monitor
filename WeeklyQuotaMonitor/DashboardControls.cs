@@ -538,11 +538,16 @@ public sealed class ApplicationSidebar : Panel
     protected override void OnLayout(LayoutEventArgs levent)
     {
         base.OnLayout(levent);
+        var compact = _navigation.ClientSize.Width is > 0 and < 150;
+        _overline.Visible = _tagline.Visible = !compact;
+        var productName = compact ? "Codex" : UiText.Get("ProductName");
+        if (_product.Text != productName) _product.Text = productName;
         ConstrainProductNameToBrandWidth();
         var buttonWidth = Math.Max(120, _navigation.ClientSize.Width - _navigation.Padding.Horizontal - 4);
         foreach (var button in _buttons.Values)
         {
             button.Width = buttonWidth;
+            button.FitCompactHeight();
         }
     }
 
@@ -620,6 +625,8 @@ public sealed class SidebarNavigationButton : Control
             true);
         MouseEnter += (_, _) => SetHovered(true);
         MouseLeave += (_, _) => SetHovered(false);
+        GotFocus += (_, _) => Invalidate();
+        LostFocus += (_, _) => Invalidate();
     }
 
     /// <summary>
@@ -633,6 +640,16 @@ public sealed class SidebarNavigationButton : Control
         Invalidate();
     }
 
+    /// <summary>紧凑导航把文字移到图标下方时，按实际换行预留高度，保留完整可读标签。</summary>
+    public void FitCompactHeight()
+    {
+        if (Width >= 150) return;
+        using var font = new Font(SystemFonts.MessageBoxFont!.FontFamily, 9.5F, _selected ? FontStyle.Bold : FontStyle.Regular);
+        var textHeight = TextRenderer.MeasureText(Text, font, new Size(Math.Max(1, Width - 8), int.MaxValue),
+            TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix).Height;
+        Height = Math.Max(Height, textHeight + 40);
+    }
+
     /// <summary>
     /// 设置按钮是否代表当前可见页面。
     /// </summary>
@@ -641,6 +658,7 @@ public sealed class SidebarNavigationButton : Control
     {
         _selected = selected;
         AccessibleDescription = selected ? "selected" : string.Empty;
+        AccessibilityNotifyClients(AccessibleEvents.StateChange, -1);
         Invalidate();
     }
 
@@ -675,12 +693,13 @@ public sealed class SidebarNavigationButton : Control
         }
 
         var iconColor = _selected ? Color.FromArgb(34, 211, 238) : Color.FromArgb(117, 137, 162);
-        DrawIcon(e.Graphics, new Rectangle(18, (Height - 20) / 2, 20, 20), iconColor);
+        var compact = Width < 150;
+        DrawIcon(e.Graphics, compact ? new Rectangle((Width - 20) / 2, 8, 20, 20) : new Rectangle(18, (Height - 20) / 2, 20, 20), iconColor);
         using var font = new Font(
             SystemFonts.MessageBoxFont!.FontFamily,
             9.5F,
             _selected ? FontStyle.Bold : FontStyle.Regular);
-        var textWidth = Math.Max(1, Width - 62);
+        var textWidth = Math.Max(1, Width - (compact ? 8 : 62));
         const TextFormatFlags textFlags = TextFormatFlags.Left | TextFormatFlags.WordBreak |
             TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix;
         var textHeight = TextRenderer.MeasureText(Text, font, new Size(textWidth, int.MaxValue), textFlags).Height;
@@ -688,9 +707,19 @@ public sealed class SidebarNavigationButton : Control
             e.Graphics,
             Text,
             font,
-            new Rectangle(52, Math.Max(0, (Height - textHeight) / 2), textWidth, textHeight),
+            new Rectangle(compact ? 4 : 52, compact ? 34 : Math.Max(0, (Height - textHeight) / 2), textWidth, textHeight),
             _selected ? Color.FromArgb(241, 245, 249) : Color.FromArgb(166, 181, 201),
-            textFlags);
+            compact ? textFlags | TextFormatFlags.HorizontalCenter : textFlags);
+        if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -4, -4),
+            Color.White, background);
+    }
+
+    /// <summary>把当前页暴露为真实选中状态，避免屏幕阅读器只能读到英文描述而无法判断当前页面。</summary>
+    protected override AccessibleObject CreateAccessibilityInstance() => new NavigationAccessibleObject(this);
+
+    private sealed class NavigationAccessibleObject(SidebarNavigationButton owner) : ControlAccessibleObject(owner)
+    {
+        public override AccessibleStates State => base.State | (owner._selected ? AccessibleStates.Selected | AccessibleStates.Pressed : AccessibleStates.None);
     }
 
     /// <summary>

@@ -376,6 +376,16 @@ internal static class TelemetryTests
                 "Empty current window jumped to old TBT");
             var models = panel.Controls.Find("TelemetryModel", true).OfType<ComboBox>().Single();
             Check(models.Items.Contains("gpt-6.1-sol"), "Request-only model unavailable for filtering");
+            var empty = panel.Controls.Find("TelemetryEmptyState", true).OfType<Label>().Single();
+            var recover = panel.Controls.Find("TelemetryUseRequestTtft", true).OfType<LinkLabel>().Single();
+            Check(empty.Visible && empty.Text == UiText.Get("UxOtelRequestsOnly") && recover.Visible,
+                "有请求但缺服务端指标时没有解释及可操作恢复入口");
+            typeof(Control).Assembly.GetType("System.Windows.Forms.LinkLabel")!
+                .GetMethod("OnLinkClicked", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(recover, [new LinkLabelLinkClickedEventArgs(new LinkLabel.Link())]);
+            PumpUntil(() => chart.DisplayedSeriesCount == 2);
+            selector.SelectedIndex = 3;
+            PumpUntil(() => chart.DisplayedSeriesCount == 0);
             var range = panel.Controls.Find("TelemetryRange", true).OfType<ComboBox>().Single(); range.SelectedIndex = 2;
             PumpUntil(() => chart.Navigation.Window!.Value.Start == ChartTimeWindow.CurrentDay(DateTimeOffset.UtcNow, 480).Start);
             range.SelectedIndex = 1;

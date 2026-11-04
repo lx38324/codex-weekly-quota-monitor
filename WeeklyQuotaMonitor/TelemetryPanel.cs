@@ -5,6 +5,11 @@ namespace WeeklyQuotaMonitor;
 /// <summary>在速度页内展示 OTLP 毫秒指标，按模型、明确层级和自由时间窗分组；没有观测时不显示伪零。</summary>
 public sealed class TelemetryPanel : UserControl
 {
+    private readonly Label _emptyState = new() { Name = "TelemetryEmptyState", AutoSize = true, Visible = false };
+    private readonly Button _reset = new() { Name = "TelemetryResetView", AutoSize = true };
+    private readonly Button _clear = new() { Name = "TelemetryClearFilters", AutoSize = true };
+    private readonly CheckBox _showDetails = new() { Name = "TelemetryShowDetails", AutoSize = true };
+    private readonly LinkLabel _requestTtft = new() { Name = "TelemetryUseRequestTtft", AutoSize = true, Visible = false };
     private readonly TelemetryService _service;
     private readonly ToolTip _tips = new();
     private readonly ComboBox _metric = new() { Name = "TelemetryMetric", Width = 280, DropDownStyle = ComboBoxStyle.DropDownList };
@@ -54,11 +59,19 @@ public sealed class TelemetryPanel : UserControl
         var bucketEditor = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
         bucketEditor.Controls.AddRange([_bucketLabel, _minutes]);
         filters.Controls.AddRange([_range, _metric, _model, _tier, _origin, _mismatches, bucketEditor, _diagnosticsButton]);
+        filters.Controls.AddRange([_reset, _clear, _showDetails]);
+        _reset.Click += (_, _) => ResetWindow();
+        _clear.Click += (_, _) => ClearFilters();
+        _showDetails.CheckedChanged += (_, _) => { _status.Visible = _showDetails.Checked; PerformLayout(); };
+        _status.Visible = false;
+        _requestTtft.LinkClicked += (_, _) => _metric.SelectedIndex = TelemetryMetrics.Names.Length;
         _diagnosticsButton.Click += async (_, _) => await ShowDiagnosticsAsync();
         var cards = new DashboardCardGrid();
         cards.SetCards(_mean, _count, _resolution);
         _layout.Controls.Add(_title, 0, 0); _layout.Controls.Add(filters, 0, 1); _layout.Controls.Add(_custom, 0, 2);
-        _layout.Controls.Add(cards, 0, 3); _layout.Controls.Add(_note, 0, 4); _layout.Controls.Add(_chart, 0, 5);
+        var context = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 1 };
+        context.Controls.Add(_note); context.Controls.Add(_emptyState); context.Controls.Add(_requestTtft);
+        _layout.Controls.Add(cards, 0, 3); _layout.Controls.Add(context, 0, 4); _layout.Controls.Add(_chart, 0, 5);
         _layout.Controls.Add(_grid, 0, 6); _layout.Controls.Add(_status, 0, 7); Controls.Add(_layout);
         foreach (var (property, key, format) in new[] { ("Start", "SpeedStart", "MM-dd HH:mm:ss"), ("End", "SpeedEnd", "MM-dd HH:mm:ss"),
             ("Model", "SpeedModel", ""), ("LocalModel", "OtelLocalModel", ""), ("Association", "OtelAssociation", ""),
@@ -105,6 +118,10 @@ public sealed class TelemetryPanel : UserControl
         else _model.Items[0] = UiText.Get("SpeedAllModels");
         _title.Text = UiText.Get("OtelTitle"); _bucketLabel.Text = UiText.Get("OtelBucketMinutes");
         _diagnosticsButton.Text = UiText.Get("OtelDiagnosticsDetails");
+        _reset.Text = UiText.Get("UxResetView"); _clear.Text = UiText.Get("UxClearFilters");
+        _showDetails.Text = UiText.Get("UxDetails"); _requestTtft.Text = UiText.Get("UxUseRequestTtft");
+        _model.AccessibleName = UiText.Get("UxModel"); _metric.AccessibleName = UiText.Get("UxMetric");
+        _range.AccessibleName = UiText.Get("ChartInitialRange");
         foreach (DataGridViewColumn column in _grid.Columns) column.HeaderText = UiText.Get(column.Name);
         _custom.ApplyLanguage(); AppTheme.Apply(this); _binding = false;
     }
@@ -113,7 +130,7 @@ public sealed class TelemetryPanel : UserControl
     protected override void OnLayout(LayoutEventArgs e)
     {
         var width = Math.Max(1, ClientSize.Width - Padding.Horizontal - 24);
-        _note.MaximumSize = _status.MaximumSize = new Size(width, 0);
+        _note.MaximumSize = _status.MaximumSize = _emptyState.MaximumSize = new Size(width, 0);
         var required = 420 * DeviceDpi / 96;
         foreach (var row in new[] { 0, 1, 2, 3, 4, 7 })
         {
@@ -130,6 +147,13 @@ public sealed class TelemetryPanel : UserControl
     private void ResetWindow()
     {
         if (_binding) return; _interactive = null; _custom.Visible = _range.SelectedIndex == (int)RangePreset.Custom; RequestRefresh();
+    }
+
+    /// <summary>清除模型、模式与来源限制；保留时间范围和指标，避免恢复动作意外跳到其他时间。</summary>
+    private void ClearFilters()
+    {
+        _binding = true; _model.SelectedIndex = 0; _tier.SelectedIndex = 0; _origin.SelectedIndex = 0; _mismatches.Checked = false;
+        _binding = false; ResetWindow();
     }
 
     /// <summary>同步监控日起点；当天预设立即重算，显式缩放视口及其他选择保持不变。</summary>
@@ -192,7 +216,7 @@ public sealed class TelemetryPanel : UserControl
             Render(data, request.Model, window); _revision = request.Revision;
         }
         catch (Exception e) when (e is SqliteException or IOException or InvalidDataException)
-        { _status.Text = UiText.Get("OtelReadFailed") + " " + e.Message; }
+        { _status.Text = UiText.Get("OtelReadFailed") + " " + e.Message; _emptyState.Text = _status.Text; _emptyState.Visible = true; }
     }
 
     /// <summary>图表、均值和观测次数使用同一查询结果；跨边界导出区间明确提示，不伪造逐请求精度。</summary>
@@ -218,8 +242,14 @@ public sealed class TelemetryPanel : UserControl
             b.LocalModel == "mixed" ? UiText.Get("OtelEvidence_mixed") : string.IsNullOrEmpty(b.LocalModel) ? "—" : b.LocalModel,
             UiText.Get("OtelEvidence_" + b.Origin), UiText.Get("OtelEvidence_" + b.Association), UiText.Get("OtelEvidence_" + b.MatchBasis), b.ModelMismatches)).ToArray(); _grid.ClearSelection();
         foreach (DataGridViewRow row in _grid.Rows)
-            if (row.DataBoundItem is Row { ModelMismatches: > 0 }) row.Cells["OtelAssociation"].Style.ForeColor = Color.DarkOrange;
-        _note.Text = UiText.Format("ChartInteractionHint", window.Start.LocalDateTime, window.End.LocalDateTime) + "\n" + UiText.Get(requests ? "OtelRequestNote" : "OtelMeasurementNote");
+            if (row.DataBoundItem is Row { ModelMismatches: > 0 }) row.Cells["OtelAssociation"].Style.ForeColor = AppTheme.Current.IsDark ? Color.FromArgb(246, 184, 82) : Color.FromArgb(137, 75, 0);
+        _note.Text = UiText.Format("ChartInteractionHint", window.Start.LocalDateTime, window.End.LocalDateTime);
+        _tips.SetToolTip(_note, UiText.Get(requests ? "OtelRequestNote" : "OtelMeasurementNote") + "\n" + UiText.Get("UxKeyboardChart"));
+        _emptyState.Visible = count == 0 || !string.IsNullOrEmpty(_service.Error);
+        _emptyState.Text = !string.IsNullOrEmpty(_service.Error) ? UiText.Get("OtelLastError") + " " + _service.Error.Split('\n')[0] :
+            data.Diagnostics.Any(d => d.RequestEvents > 0) ? UiText.Get("UxOtelRequestsOnly") :
+            data.Diagnostics.Any(d => d.Baselines > 0) ? UiText.Get("UxOtelBaseline") : UiText.Get("UxOtelNoEvents");
+        _requestTtft.Visible = count == 0 && !requests && data.Diagnostics.Any(d => d.RequestEvents > 0);
         _status.Text = UiText.Format("OtelStatus", _service.Listening ? $"127.0.0.1:{_service.Options.Port}" : UiText.Get("OtelNotListening"),
             _service.LastReceived?.LocalDateTime.ToString("MM-dd HH:mm:ss") ?? "—", _service.Accepted, _service.Failed,
             _service.Ignored, _service.Bytes / 1048576d, _service.Evicted, _service.Baselines, _service.Duplicates, _service.Discontinuities);

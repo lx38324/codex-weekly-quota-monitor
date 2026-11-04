@@ -35,6 +35,7 @@ public sealed class PricingEditorPanel : UserControl
     private Dictionary<string, ModelPriceProfile> _profiles = new(StringComparer.OrdinalIgnoreCase);
     private string _editingModel = string.Empty;
     private bool _loading;
+    public event Action? DraftChanged;
 
     /// <summary>
     /// 构建可滚动价格编辑器并绑定模型切换、长上下文开关和价格复位行为。
@@ -70,6 +71,11 @@ public sealed class PricingEditorPanel : UserControl
         _longEnabled.CheckedChanged += (_, _) => UpdateLongContextEnabledState();
         _longCacheWriteEnabled.CheckedChanged += (_, _) => UpdateLongContextEnabledState();
         _restoreBuiltIn.Click += (_, _) => RestoreBuiltInPrices();
+        foreach (var number in new[] { _shortInput, _shortCached, _shortCacheWrite, _shortOutput,
+                     _longThreshold, _longInput, _longCached, _longCacheWrite, _longOutput })
+            number.ValueChanged += (_, _) => { if (!_loading) DraftChanged?.Invoke(); };
+        foreach (var option in new[] { _shortCacheWriteEnabled, _longEnabled, _longCacheWriteEnabled })
+            option.CheckedChanged += (_, _) => { if (!_loading) DraftChanged?.Invoke(); };
         ApplyLocalization();
     }
 
@@ -123,6 +129,7 @@ public sealed class PricingEditorPanel : UserControl
         }
 
         _status.Text = UiText.Get("PricingRestoredPending");
+        DraftChanged?.Invoke();
     }
 
     /// <summary>
@@ -161,7 +168,7 @@ public sealed class PricingEditorPanel : UserControl
     }
 
     /// <summary>
-    /// 构建可关闭的长上下文阈值与四类价格表单；关闭时模型明确不支持长上下文价格。
+    /// 构建可选对比价格；关闭后不生成该模型的长上下文对比，基础标准价格仍可计算。
     /// </summary>
     /// <returns>自动适应 DPI 和宽度的长上下文分组。</returns>
     private Control BuildLongContextGroup()

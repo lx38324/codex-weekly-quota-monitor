@@ -59,6 +59,14 @@ public sealed class SettingsPanel : UserControl
     private readonly Button _revert = new() { AutoSize = true };
     private readonly Button _defaults = new() { AutoSize = true };
     private AppSettings _activeSettings;
+    private bool _loading;
+    private readonly CheckBox _showAdvanced = new() { Name = "ShowAdvancedSettings", AutoSize = true };
+    private readonly Label _draftStatus = new() { Name = "SettingsDraftStatus", AutoSize = true };
+    private readonly Label _methodNote = new() { AutoSize = true, MaximumSize = new Size(520, 0) };
+    private readonly Label _longContextHint = new() { AutoSize = true, MaximumSize = new Size(520, 0) };
+    private TabPage[] _allPages = [];
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public bool HasUnsavedChanges { get; private set; }
 
     public event Action<AppSettings>? SettingsSaved;
 
@@ -69,21 +77,33 @@ public sealed class SettingsPanel : UserControl
     public SettingsPanel(AppSettings settings)
     {
         _activeSettings = settings;
+        _regressionMode.Name = "RegressionMode";
+        _linearPoints.Name = "RegressionLinearPoints"; _segmentHours.Name = "RegressionSegmentHours"; _gaussianHours.Name = "RegressionGaussianHours";
         Dock = DockStyle.Fill;
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
 
         BuildSections();
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Padding = new Padding(8) };
+        _allPages = _sections.TabPages.Cast<TabPage>().ToArray();
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1, Padding = new Padding(8) };
         root.ColumnStyles.Add(new(SizeType.Percent, 100));
+        root.RowStyles.Add(new(SizeType.AutoSize));
         root.RowStyles.Add(new(SizeType.Percent, 100));
         root.RowStyles.Add(new(SizeType.AutoSize));
-        root.Controls.Add(_sections, 0, 0);
-        root.Controls.Add(BuildActionBar(), 0, 1);
+        var heading = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
+        heading.Controls.AddRange([_showAdvanced, _draftStatus]);
+        root.Controls.Add(heading, 0, 0);
+        root.Controls.Add(_sections, 0, 1);
+        root.Controls.Add(BuildActionBar(), 0, 2);
         Controls.Add(root);
+        _showAdvanced.CheckedChanged += (_, _) => UpdateSections();
+        _regressionMode.SelectedValueChanged += (_, _) => UpdateRegressionFields();
+        ObserveDraft(this);
+        _pricingEditor.DraftChanged += MarkDraftChanged;
 
         LoadSettings(settings);
         ApplyLocalization();
+        UpdateSections();
         AppTheme.Apply(this);
     }
 
@@ -93,6 +113,7 @@ public sealed class SettingsPanel : UserControl
     /// <param name="settings">需要显示的设置。</param>
     public void LoadSettings(AppSettings settings)
     {
+        _loading = true;
         _activeSettings = settings;
         _codexExecutable.Text = settings.CodexExecutable;
         _codexArguments.Text = settings.CodexArguments;
@@ -125,6 +146,75 @@ public sealed class SettingsPanel : UserControl
         BindSpeedMode(settings.Speed.Mode);
         BindChoices(settings.Regression.Mode, settings.Language, settings.Theme);
         _saveStatus.Text = string.Empty;
+        _loading = false; HasUnsavedChanges = false;
+        _draftStatus.Text = UiText.Get("UxSaved");
+        UpdateRegressionFields();
+    }
+
+    /// <summary>重新进入设置时保留未保存草稿；无编辑时才同步最新已生效配置。</summary>
+    public void ResumeSettings(AppSettings settings)
+    {
+        if (!HasUnsavedChanges) LoadSettings(settings);
+    }
+
+    /// <summary>跟踪实际可编辑字段，排除页面开关和价格内部模型切换产生的展示事件。</summary>
+    private void ObserveDraft(Control root)
+    {
+        foreach (Control child in root.Controls)
+        {
+            if (child == _pricingEditor || child == _showAdvanced) continue;
+            switch (child)
+            {
+                case NumericUpDown number: number.ValueChanged += (_, _) => MarkDraftChanged(); break;
+                case TextBox text: text.TextChanged += (_, _) => MarkDraftChanged(); break;
+                case CheckBox option: option.CheckedChanged += (_, _) => MarkDraftChanged(); break;
+                case ComboBox choice: choice.SelectedValueChanged += (_, _) => MarkDraftChanged(); break;
+                case DateTimePicker date: date.ValueChanged += (_, _) => MarkDraftChanged(); break;
+            }
+            ObserveDraft(child);
+        }
+    }
+
+    /// <summary>只标记用户编辑；加载、翻译与控件绑定期间不制造未保存提示。</summary>
+    private void MarkDraftChanged()
+    {
+        if (_loading) return;
+        HasUnsavedChanges = true; _draftStatus.Text = UiText.Get("UxDraft");
+    }
+
+    /// <summary>默认只展示常用分类，数据源、采样细节和内部说明可通过高级开关找回。</summary>
+    private void UpdateSections()
+    {
+        var selected = _sections.SelectedTab;
+        _sections.SuspendLayout();
+        _sections.TabPages.Clear();
+        foreach (var page in _allPages)
+            if (_showAdvanced.Checked || _localizedControls[page] is not ("SettingsDataSource" or "SettingsSampling" or "SettingsAdvanced"))
+                _sections.TabPages.Add(page);
+        if (selected is not null && _sections.TabPages.Contains(selected)) _sections.SelectedTab = selected;
+        _sections.ResumeLayout();
+    }
+
+    /// <summary>只展开当前回归方式适用的参数，保留其他参数的编辑值，并解释参数对平滑度的影响。</summary>
+    private void UpdateRegressionFields()
+    {
+        var mode = SelectedRegressionMode();
+        SetFieldVisible(_linearPoints, mode == RegressionMode.Linear);
+        SetFieldVisible(_segmentHours, mode == RegressionMode.TimeWindowSegmented);
+        SetFieldVisible(_gaussianHours, mode == RegressionMode.GaussianAggregation);
+        _methodNote.Text = UiText.Get(mode switch { RegressionMode.Linear => "UxRegressionLinear",
+            RegressionMode.TimeWindowSegmented => "UxRegressionSegmented", _ => "UxRegressionGaussian" });
+    }
+
+    /// <summary>同时隐藏字段、标签和所属行，避免不可用参数继续占据操作空间。</summary>
+    private static void SetFieldVisible(Control control, bool visible)
+    {
+        if (control.Parent is not TableLayoutPanel layout) return;
+        var row = layout.GetPositionFromControl(control).Row;
+        control.Visible = visible;
+        layout.GetControlFromPosition(0, row)!.Visible = visible;
+        layout.RowStyles[row].SizeType = visible ? SizeType.AutoSize : SizeType.Absolute;
+        layout.RowStyles[row].Height = 0;
     }
 
     /// <summary>
@@ -132,6 +222,7 @@ public sealed class SettingsPanel : UserControl
     /// </summary>
     public void ApplyLocalization()
     {
+        var wasLoading = _loading; _loading = true;
         foreach (var pair in _localizedControls)
         {
             pair.Key.Text = UiText.Get(pair.Value);
@@ -145,6 +236,9 @@ public sealed class SettingsPanel : UserControl
         _save.Text = UiText.Get("SaveApply");
         _revert.Text = UiText.Get("Revert");
         _defaults.Text = UiText.Get("RestoreDefaults");
+        _showAdvanced.Text = UiText.Get("UxAdvanced");
+        _draftStatus.Text = UiText.Get(HasUnsavedChanges ? "UxDraft" : "UxSaved");
+        _longContextHint.Text = UiText.Get("UxLongContextHint");
         _startWithWindows.Text = UiText.Get("SettingsAutostart");
         _repairShortcut.Text = UiText.Get("StartupRepairShortcut");
         _windowsStartup.Text = UiText.Get("StartupOpenWindows");
@@ -162,6 +256,7 @@ public sealed class SettingsPanel : UserControl
             SelectedLanguage(),
             SelectedTheme());
         AppTheme.Apply(this);
+        UpdateRegressionFields(); _loading = wasLoading;
     }
 
     /// <summary>
@@ -175,7 +270,8 @@ public sealed class SettingsPanel : UserControl
             ("StartupRepairShortcut", _repairShortcut),
             ("StartupOpenWindows", _windowsStartup),
             ("SettingsHistoryDays", _historyDays),
-            ("SettingsDayStart", _dayStart)]);
+            ("SettingsDayStart", _dayStart),
+            ("SettingsPollSeconds", _pollSeconds)]);
         _repairShortcut.Click += RepairShortcutClicked;
         _windowsStartup.Click += (_, _) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:startupapps") { UseShellExecute = true });
         var generalPage = _sections.TabPages[0]; generalPage.AutoScroll = true;
@@ -186,14 +282,15 @@ public sealed class SettingsPanel : UserControl
             ("SettingsAppServerArgs", _codexArguments),
             ("SettingsSessionRoot", WithBrowse(_sessionRoot, BrowseSessionRoot))]);
         AddSection("SettingsSampling", [
-            ("SettingsPollSeconds", _pollSeconds),
             ("SettingsLimitId", _limitId),
             ("SettingsMinimumWindow", _minimumWindowMinutes),
             ("SettingsMinimumDelta", _minimumDelta),
             ("SettingsLookback", _lookbackHours)]);
         AddSection("SettingsEstimation", [
             ("SettingsOfficialLongContext", (Control)_enableOfficialLongContextEstimate),
+            ("SettingsOfficialLongContext", _longContextHint),
             ("SettingsRegressionMode", _regressionMode),
+            ("SettingsRegressionMode", _methodNote),
             ("SettingsLinearPoints", _linearPoints),
             ("SettingsSegmentHours", _segmentHours),
             ("SettingsGaussianHours", _gaussianHours),
@@ -239,7 +336,7 @@ public sealed class SettingsPanel : UserControl
     /// <param name="rows">字段资源键与输入控件。</param>
     private void AddSection(string sectionKey, IReadOnlyList<(string Key, Control Control)> rows)
     {
-        var page = new TabPage();
+        var page = new TabPage { AutoScroll = true };
         _localizedControls[page] = sectionKey;
         var layout = new TableLayoutPanel
         {
@@ -270,11 +367,12 @@ public sealed class SettingsPanel : UserControl
         bar.ColumnStyles.Add(new(SizeType.Percent, 100));
         bar.ColumnStyles.Add(new(SizeType.AutoSize));
         _saveStatus.ForeColor = AppTheme.Current.Positive;
-        var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
+        var buttons = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Dock = DockStyle.Fill };
         _save.Click += SaveClicked;
         _revert.Click += ReloadClicked;
         _defaults.Click += RestoreDefaultsClicked;
-        buttons.Controls.AddRange([_save, _revert, _defaults]);
+        buttons.Controls.AddRange([_defaults, _revert, _save]);
         bar.Controls.Add(_saveStatus, 0, 0);
         bar.Controls.Add(buttons, 1, 0);
         return bar;
@@ -345,6 +443,7 @@ public sealed class SettingsPanel : UserControl
             RuntimeLog.Write(exception.ToString()); RefreshStartupStatus(); return;
         }
         _activeSettings = settings;
+        HasUnsavedChanges = false; _draftStatus.Text = UiText.Get("UxSaved");
         _saveStatus.Text = UiText.Format("SavedAt", DateTime.Now);
         RefreshStartupStatus();
     }
@@ -379,6 +478,7 @@ public sealed class SettingsPanel : UserControl
         var active = _activeSettings;
         LoadSettings(new AppSettings());
         _activeSettings = active;
+        MarkDraftChanged();
     }
 
     /// <summary>
@@ -444,9 +544,9 @@ public sealed class SettingsPanel : UserControl
     /// <param name="control">字段输入控件。</param>
     private void AddRow(TableLayoutPanel layout, int row, string labelKey, Control control)
     {
-        layout.RowStyles.Add(new(SizeType.Absolute, 44));
+        layout.RowStyles.Add(new(SizeType.AutoSize));
         var label = new Label { AutoSize = true, Anchor = AnchorStyles.Left };
-        _localizedControls[label] = labelKey;
+        if (control != _methodNote && control != _longContextHint) _localizedControls[label] = labelKey;
         control.Dock = DockStyle.Fill;
         control.Margin = new Padding(3, 6, 3, 6);
         layout.Controls.Add(label, 0, row);

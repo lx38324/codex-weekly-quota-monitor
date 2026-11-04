@@ -37,7 +37,9 @@ public sealed class ChartTimeNavigation : IDisposable
         _owner = owner; owner.TabStop = true;
         owner.MouseWheel += Wheel; owner.MouseDown += Down; owner.MouseMove += Move;
         owner.MouseUp += Up; owner.MouseDoubleClick += DoubleClick;
-        owner.MouseCaptureChanged += CaptureChanged; owner.MouseEnter += Enter;
+        owner.MouseCaptureChanged += CaptureChanged;
+        owner.KeyDown += KeyDown; owner.PreviewKeyDown += PreviewKeyDown;
+        owner.GotFocus += FocusChanged; owner.LostFocus += FocusChanged;
     }
 
     /// <summary>设置已知采样边界；单点保留其前方一秒，不向未来补出空白。</summary>
@@ -98,8 +100,30 @@ public sealed class ChartTimeNavigation : IDisposable
             DateTimeOffset.FromUnixTimeMilliseconds((long)Math.Round(start + span)));
     }
 
-    /// <summary>获取键盘焦点以接收滚轮，不在绘图区外处理缩放。</summary>
-    private void Enter(object? sender, EventArgs e) => _owner.Focus();
+    /// <summary>把方向键作为图表输入，避免系统先将它们用于移动到其他控件。</summary>
+    private void PreviewKeyDown(object? sender, PreviewKeyDownEventArgs e)
+    {
+        if (e.KeyCode is Keys.Left or Keys.Right or Keys.Home) e.IsInputKey = true;
+    }
+
+    /// <summary>提供与鼠标等价的时间导航；按键只作用于当前图表，Home恢复所选范围。</summary>
+    private void KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (_window is not { } window) return;
+        switch (e.KeyCode)
+        {
+            case Keys.Left: Publish(Pan(window, -0.15)); break;
+            case Keys.Right: Publish(Pan(window, 0.15)); break;
+            case Keys.Add: case Keys.Oemplus: Publish(Zoom(window, 0.5, 1 / 1.2)); break;
+            case Keys.Subtract: case Keys.OemMinus: Publish(Zoom(window, 0.5, 1.2)); break;
+            case Keys.Home: ResetRequested?.Invoke(); break;
+            default: return;
+        }
+        e.Handled = true; e.SuppressKeyPress = true;
+    }
+
+    /// <summary>焦点变化立即重绘，供图表显示独立焦点边框。</summary>
+    private void FocusChanged(object? sender, EventArgs e) => _owner.Invalidate();
 
     /// <summary>滚轮向上放大、向下缩小，更新后的窗口直接交给业务页重算。</summary>
     private void Wheel(object? sender, MouseEventArgs e)
@@ -113,6 +137,7 @@ public sealed class ChartTimeNavigation : IDisposable
     private void Down(object? sender, MouseEventArgs e)
     {
         if (e.Button != MouseButtons.Left || e.Clicks > 1 || !_plot.Contains(e.Location) || _window is null) return;
+        _owner.Focus();
         _dragWindow = _window; _dragX = e.X; _dragWidth = _plot.Width;
         _owner.Capture = true; _owner.Cursor = Cursors.SizeWE;
     }
@@ -154,6 +179,8 @@ public sealed class ChartTimeNavigation : IDisposable
     public void Dispose()
     {
         _owner.MouseWheel -= Wheel; _owner.MouseDown -= Down; _owner.MouseMove -= Move; _owner.MouseUp -= Up;
-        _owner.MouseDoubleClick -= DoubleClick; _owner.MouseCaptureChanged -= CaptureChanged; _owner.MouseEnter -= Enter;
+        _owner.MouseDoubleClick -= DoubleClick; _owner.MouseCaptureChanged -= CaptureChanged;
+        _owner.KeyDown -= KeyDown; _owner.PreviewKeyDown -= PreviewKeyDown;
+        _owner.GotFocus -= FocusChanged; _owner.LostFocus -= FocusChanged;
     }
 }

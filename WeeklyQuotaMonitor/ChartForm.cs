@@ -69,6 +69,8 @@ public sealed class ChartForm : Form
     private readonly Label _summary = new() { Name = "HistorySummaryLabel" };
     private readonly Label _timeRangeLabel = new();
     private readonly ComboBox _timeRange = new() { Name = "HistoryRangeComboBox" };
+    private readonly Button _resetView = new() { Name = "QuotaResetView", AutoSize = true };
+    private readonly Label _tableScope = new() { Name = "QuotaTableScope", AutoSize = true, Dock = DockStyle.Fill };
     private ChartTimeWindow? _interactiveWindow;
     private readonly Label _navigationInfo = new() { Name = "QuotaNavigationInfo", AutoSize = true, Dock = DockStyle.Fill, Padding = new Padding(12, 2, 12, 4) };
     private readonly CustomTimeWindowControl _customWindow = new() { Visible = false, Name = "QuotaCustomWindow" };
@@ -136,6 +138,14 @@ public sealed class ChartForm : Form
 
     public DashboardSection SelectedSection => _selectedSection;
 
+    /// <summary>窄窗口与高缩放下限制侧栏所占比例，把空间让给当前监控任务；导航文字仍可换行且保留完整名称。</summary>
+    protected override void OnLayout(LayoutEventArgs e)
+    {
+        if (_sidebar?.Parent is TableLayoutPanel shell && ClientSize.Width > 0 && shell.ColumnStyles[0].Width > ClientSize.Width * 0.26)
+            shell.ColumnStyles[0].Width = Math.Max(180, ClientSize.Width / 6);
+        base.OnLayout(e);
+    }
+
     /// <summary>
     /// 构造标题、紧凑指标带、趋势图和逐点明细合并而成的额度工作台。
     /// </summary>
@@ -167,7 +177,7 @@ public sealed class ChartForm : Form
         header.RowStyles.Add(new(SizeType.AutoSize));
         header.RowStyles.Add(new(SizeType.AutoSize));
         _connectionBadge.Margin = new Padding(20, 2, 0, 0);
-        header.Controls.Add(_dashboardEyebrow, 0, 0);
+        _dashboardEyebrow.Visible = false;
         header.Controls.Add(_dashboardTitle, 0, 1);
         header.Controls.Add(_dashboardSubtitle, 0, 2);
         header.Controls.Add(_connectionBadge, 1, 1);
@@ -200,11 +210,11 @@ public sealed class ChartForm : Form
         _fittingDashboard = true;
         try
         {
-            var custom = SelectedHistoryRange() == HistoryRange.Custom;
-            _dashboardPage.AutoScroll = custom;
-            _dashboardContent.Dock = custom ? DockStyle.Top : DockStyle.Fill;
-            if (!custom) { _dashboardPage.AutoScrollMinSize = Size.Empty; return; }
-            var dataHeight = Math.Max(320, _grid.ColumnHeadersHeight + _grid.RowTemplate.Height * 3 + 180);
+            _dashboardSubtitle.MaximumSize = new Size(Math.Max(160, _dashboardContent.ClientSize.Width -
+                _dashboardContent.Padding.Horizontal - _connectionBadge.Width - 40), 0);
+            _dashboardPage.AutoScroll = true;
+            _dashboardContent.Dock = DockStyle.Top;
+            var dataHeight = Math.Max(400 * DeviceDpi / 96, _grid.ColumnHeadersHeight + _grid.RowTemplate.Height * 3 + 240 * DeviceDpi / 96);
             var required = _dashboardContent.GetRowHeights().Take(2).Sum() +
                 _trendContent.GetRowHeights().Take(5).Sum() + dataHeight +
                 _dashboardContent.Padding.Vertical + _trendFrame.Padding.Vertical + _trendFrame.Margin.Vertical + 24;
@@ -248,21 +258,25 @@ public sealed class ChartForm : Form
             _showBaseSamples,
             _showBaseRegression,
             _showOfficialSamples,
-            _showOfficialRegression]);
+            _showOfficialRegression,
+            _resetView]);
+        _resetView.Click += (_, _) => { _interactiveWindow = null; RefreshHistoryPage(); };
 
         _chart.Dock = DockStyle.Fill;
         var dataStack = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 2,
+            RowCount = 3,
             Margin = new Padding(8, 0, 8, 8)
         };
         dataStack.ColumnStyles.Add(new(SizeType.Percent, 100));
-        dataStack.RowStyles.Add(new(SizeType.Percent, 68));
-        dataStack.RowStyles.Add(new(SizeType.Percent, 32));
+        dataStack.RowStyles.Add(new(SizeType.Percent, 50));
+        dataStack.RowStyles.Add(new(SizeType.AutoSize));
+        dataStack.RowStyles.Add(new(SizeType.Percent, 50));
         dataStack.Controls.Add(_chart, 0, 0);
-        dataStack.Controls.Add(_grid, 0, 1);
+        dataStack.Controls.Add(_tableScope, 0, 1);
+        dataStack.Controls.Add(_grid, 0, 2);
 
         _trendContent.ColumnStyles.Add(new(SizeType.Percent, 100));
         _trendContent.RowStyles.Add(new(SizeType.AutoSize));
@@ -397,6 +411,7 @@ public sealed class ChartForm : Form
         _dashboardTitle.Text = UiText.Get("DashboardTitle");
         _dashboardSubtitle.Text = UiText.Get("DashboardSubtitle");
         _timeRangeLabel.Text = UiText.Get("ChartInitialRange");
+        _resetView.Text = UiText.Get("UxResetView");
         _showBaseSamples.Text = UiText.Get("SeriesBaseSamples");
         _showBaseRegression.Text = UiText.Get("SeriesBaseRegression");
         _showOfficialSamples.Text = UiText.Get("SeriesOfficialSamples");
@@ -435,7 +450,7 @@ public sealed class ChartForm : Form
     /// <param name="settings">协调器当前已生效设置。</param>
     public void ShowSettingsTab(AppSettings settings)
     {
-        _settingsPanel.LoadSettings(settings);
+        _settingsPanel.ResumeSettings(settings);
         SelectSection(DashboardSection.Settings);
         ShowWindow();
     }
@@ -633,6 +648,8 @@ public sealed class ChartForm : Form
             UiText.Get(_view.ShowingPreviousPrices ? "RepricingPreviousLabel" : "EstimateBase"),
             EstimateValue(baseAnalysis.CurrentEstimate),
             UiText.Format("DashboardEstimateCaption", baseAnalysis.CurrentContributions.Count));
+        UpdateEstimateStatus(available, samples, baseAnalysis.CurrentContributions.Count);
+        _tableScope.Text = UiText.Format("UxGridRange", selected.Text);
 
         var baseEstimate = RegressionEstimateText(
             baseAnalysis.CurrentEstimate,
@@ -735,7 +752,7 @@ public sealed class ChartForm : Form
         _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells;
         _grid.MultiSelect = false;
         _grid.DefaultCellStyle.Padding = new Padding(4, 4, 4, 4);
-        _grid.TabStop = false;
+        _grid.TabStop = true;
         _grid.DataBindingComplete += (_, _) =>
         {
             _grid.ClearSelection();
@@ -756,6 +773,26 @@ public sealed class ChartForm : Form
         AddGridColumn("GridMultiplier", nameof(SampleGridRow.CreditMultipliers), 90, null);
         AddGridColumn("GridSource", nameof(SampleGridRow.SampleSource), 105, null);
         AddGridColumn("GridPricing", nameof(SampleGridRow.PricingVersion), 180, null);
+    }
+
+    /// <summary>以现有采集证据区分历史视野、未追平、重算、断连与可用状态；不把样本量冒充置信度。</summary>
+    private void UpdateEstimateStatus(QuotaSample[] available, QuotaSample[] visible, int contributionCount)
+    {
+        var view = _view!;
+        var current = view.RateLimit is not { } rate ? available : available.Where(s => s.LimitId == rate.LimitId &&
+            s.Timestamp >= rate.ResetsAt.AddMinutes(-rate.WindowDurationMinutes) && s.Timestamp <= rate.ResetsAt).ToArray();
+        var latest = current.OrderBy(s => s.Timestamp).LastOrDefault();
+        var shown = visible.OrderBy(s => s.Timestamp).LastOrDefault();
+        _dashboardSubtitle.Text = view.ShowingPreviousPrices || view.RepricingProgressPercent.HasValue ? UiText.Get("UxEstimateRepricing") :
+            !view.AppServerConnected ? UiText.Get("UxEstimateOffline") :
+            view.RateLimit is null || DateTimeOffset.Now - view.RateLimit.SampledAt > TimeSpan.FromSeconds(Math.Max(120, _settings.PollIntervalSeconds * 2)) ? UiText.Get("UxEstimateQueryWaiting") :
+            latest is null || shown is null || contributionCount == 0 ? UiText.Get("UxEstimateWaiting") :
+            _interactiveWindow.HasValue || shown.Timestamp < latest.Timestamp ? UiText.Format("UxEstimateHistory", shown.Timestamp.LocalDateTime, contributionCount) :
+            latest.UsedPercent < view.RateLimit.UsedPercent || view.HistoricalReplayUnattributedUsedPercents.Count > 0 ?
+                UiText.Format("UxEstimateBehind", latest.UsedPercent, view.RateLimit.UsedPercent, latest.Timestamp.LocalDateTime) :
+            latest.UsedPercent > view.RateLimit.UsedPercent ? UiText.Format("UxEstimateHistory", shown.Timestamp.LocalDateTime, contributionCount) :
+                UiText.Format("UxEstimateReady", latest.Timestamp.LocalDateTime, contributionCount);
+        _dashboardSubtitle.AccessibleName = _dashboardSubtitle.Text;
     }
 
     /// <summary>

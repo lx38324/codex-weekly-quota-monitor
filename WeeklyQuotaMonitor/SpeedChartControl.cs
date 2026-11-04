@@ -36,6 +36,8 @@ public sealed class SpeedChartControl : Control
             .Select(b => new ChartPoint(b.End, b.Model, b.ServiceTier, streaming ? b.StreamingCount : b.Count,
                 streaming ? b.StreamingTps!.Value : visibleTokens ? b.VisibleTps : b.TotalTps)).ToArray();
         _models = models; _unit = "TPS";
+        AccessibleName = UiText.Get(streaming ? "SpeedStreamingTps" : visibleTokens ? "SpeedVisibleTps" : "SpeedTotalTps");
+        AccessibleDescription = UiText.Get("UxKeyboardChart");
         Invalidate();
     }
 
@@ -44,6 +46,7 @@ public sealed class SpeedChartControl : Control
     {
         _buckets = buckets.Select(b => new ChartPoint(b.End, b.Model, b.Tier, b.Count, b.Mean)).ToArray();
         _models = models; _unit = "ms"; Invalidate();
+        AccessibleName = UiText.Get("OtelTitle"); AccessibleDescription = UiText.Get("UxKeyboardChart");
     }
 
     /// <summary>图例逐项标出模型及速度模式，并按实际文字宽度换行；同模型不同模式不连线。</summary>
@@ -53,6 +56,7 @@ public sealed class SpeedChartControl : Control
         _hitPoints.Clear();
         var theme = AppTheme.Current;
         e.Graphics.Clear(theme.Surface);
+        if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -2, -2), theme.Text, theme.Surface);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var scale = DeviceDpi / 96f;
         var lineHeight = TextRenderer.MeasureText("Ag", Font).Height + (int)(6 * scale);
@@ -158,7 +162,7 @@ public sealed class SpeedChartControl : Control
     private void ShowPointDetails(Point point)
     {
         if (Navigation.IsDragging) { _tooltip.Hide(this); return; }
-        var nearest = _hitPoints.OrderBy(item => Math.Pow(item.Point.X - point.X, 2) + Math.Pow(item.Point.Y - point.Y, 2)).FirstOrDefault();
+        var nearest = _hitPoints.MinBy(item => Math.Pow(item.Point.X - point.X, 2) + Math.Pow(item.Point.Y - point.Y, 2));
         if (nearest.Bucket is null || Math.Abs(nearest.Point.X - point.X) > 12 || Math.Abs(nearest.Point.Y - point.Y) > 12)
         { _tooltip.Hide(this); return; }
         var bucket = nearest.Bucket;

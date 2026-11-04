@@ -48,6 +48,10 @@ internal static class SpeedLayoutTests
                                                    language == UiLanguage.English && scale == 2F))
                 {
                     form.ClientSize = new Size(1150, 800); Application.DoEvents();
+                    var chart = Find<SpeedChartControl>(panel).Single();
+                    var chartBounds = form.RectangleToClient(chart.RectangleToScreen(chart.ClientRectangle));
+                    if (chartBounds.Top > form.ClientRectangle.Bottom - 160)
+                        throw new InvalidOperationException($"{language}/{scale:P0}: 首屏没有为核心曲线保留可读区域：{chartBounds}。");
                     using var image = new Bitmap(form.Width, form.Height);
                     form.DrawToBitmap(image, new Rectangle(Point.Empty, form.Size));
                     image.Save(Path.Combine(outputDirectory, $"speed-{language}-{scale * 100:0}.png"));
