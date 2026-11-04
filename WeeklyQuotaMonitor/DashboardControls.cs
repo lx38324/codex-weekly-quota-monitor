@@ -272,17 +272,11 @@ public sealed class DashboardCardGrid : Panel
 
         var scale = DeviceDpi / 96F;
         var outerPadding = (int)Math.Round(4 * scale);
-        var gap = (int)Math.Round(10 * scale);
-        var usableWidth = Math.Max(_cards.Count, proposedSize.Width - outerPadding * 2);
-        var availableCardWidth = Math.Max(_cards.Count, usableWidth - gap * (_cards.Count - 1));
-        var heroWeight = _cards[0].Style == MetricCardStyle.Hero ? 1.55 : 1.0;
-        var unitWidth = availableCardWidth / (heroWeight + _cards.Count - 1);
+        var widths = MeasureSingleRowWidths(proposedSize.Width);
         var maximumHeight = 0;
         for (var index = 0; index < _cards.Count; index++)
         {
-            var weight = index == 0 ? heroWeight : 1.0;
-            var width = Math.Max(1, (int)Math.Round(unitWidth * weight));
-            maximumHeight = Math.Max(maximumHeight, _cards[index].GetPreferredSize(new Size(width, 0)).Height);
+            maximumHeight = Math.Max(maximumHeight, _cards[index].GetPreferredSize(new Size(widths[index], 0)).Height);
         }
 
         return new(Math.Max(1, proposedSize.Width), maximumHeight + outerPadding * 2);
@@ -345,21 +339,13 @@ public sealed class DashboardCardGrid : Panel
         var scale = DeviceDpi / 96F;
         var outerPadding = (int)Math.Round(4 * scale);
         var gap = (int)Math.Round(10 * scale);
-        var usableWidth = Math.Max(_cards.Count, ClientSize.Width - outerPadding * 2);
-        var availableCardWidth = Math.Max(
-            _cards.Count,
-            usableWidth - gap * (_cards.Count - 1));
-        var heroWeight = _cards[0].Style == MetricCardStyle.Hero ? 1.55 : 1.0;
-        var unitWidth = availableCardWidth / (heroWeight + _cards.Count - 1);
+        var widths = MeasureSingleRowWidths(ClientSize.Width);
         var cardHeight = Math.Max(1, ClientSize.Height - outerPadding * 2);
         var x = outerPadding;
 
         for (var index = 0; index < _cards.Count; index++)
         {
-            var weight = index == 0 ? heroWeight : 1.0;
-            var cardWidth = index == _cards.Count - 1
-                ? Math.Max(1, ClientSize.Width - outerPadding - x)
-                : Math.Max(1, (int)Math.Round(unitWidth * weight));
+            var cardWidth = widths[index];
             _cards[index].Bounds = new Rectangle(
                 x,
                 outerPadding,
@@ -367,6 +353,21 @@ public sealed class DashboardCardGrid : Panel
                 cardHeight);
             x += cardWidth + gap;
         }
+    }
+
+    /// <summary>先遵守各辅助卡最小宽度，再把剩余宽度分给主卡；测量和摆放共用结果，避免WinForms再次钳制宽度导致末卡越界。</summary>
+    private int[] MeasureSingleRowWidths(int width)
+    {
+        var scale = DeviceDpi / 96F;
+        var available = Math.Max(_cards.Count, width - (int)Math.Round(4 * scale) * 2 -
+            (int)Math.Round(10 * scale) * (_cards.Count - 1));
+        var heroWeight = _cards[0].Style == MetricCardStyle.Hero ? 1.55 : 1.0;
+        var unitWidth = available / (heroWeight + _cards.Count - 1);
+        var widths = new int[_cards.Count];
+        for (var index = 1; index < widths.Length; index++)
+            widths[index] = Math.Max(_cards[index].MinimumSize.Width, (int)Math.Floor(unitWidth));
+        widths[0] = Math.Max(_cards[0].MinimumSize.Width, available - widths.Skip(1).Sum());
+        return widths;
     }
 
     /// <summary>测量和摆放共享同一排版计划；先分配缩放后的最小宽度，再分配余量，窄窗主卡独占首行。</summary>

@@ -533,12 +533,18 @@ internal static class Program
     }
 
     /// <summary>
-    /// 验证用户截图对应的 1160×730 客户区内五张指标卡、趋势图和连接徽标完整可见。
+    /// 验证原用户视口及云端小桌面宽度下五张指标卡、趋势图和连接徽标完整可见。
     /// </summary>
     private static void TestDashboardFitsReportedViewport()
     {
+        foreach (var width in new[] { 1160, 1028 }) VerifyDashboardFitsViewport(width);
+    }
+
+    /// <summary>按指定客户区宽度检查卡片边界及曲线同屏，缩窄视口不能靠裁切指标内容实现。</summary>
+    private static void VerifyDashboardFitsViewport(int width)
+    {
         using var form = new ChartForm(new AppSettings(), _ => { });
-        form.ClientSize = new Size(1160, 730);
+        form.ClientSize = new Size(width, 730);
         form.UpdateView(CreateDashboardPreviewView(), new RegressionOptions { Mode = RegressionMode.GaussianAggregation });
         form.ShowDashboardTab();
         Application.DoEvents();
@@ -551,7 +557,7 @@ internal static class Program
         foreach (var card in cards)
         {
             var cardRectangle = card.RectangleToScreen(card.ClientRectangle);
-            Equal(true, visibleGrid.Contains(cardRectangle), $"指标卡 {card.AccessibleName} 不得被卡片工作区裁切");
+            Equal(true, visibleGrid.Contains(cardRectangle), $"{form.DeviceDpi}DPI/{form.ClientSize}: 指标卡 {card.AccessibleName} 不得被卡片工作区裁切；卡片={cardRectangle}，容器={visibleGrid}");
             Equal(
                 true,
                 FindControls<Label>(card).All(label => label.BackColor == Color.Transparent),
