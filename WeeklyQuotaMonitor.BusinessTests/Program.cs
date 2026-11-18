@@ -81,6 +81,7 @@ internal static class Program
             if (arguments.Length == 1 && arguments[0] == "--test-long-context-independence") { LongContextIndependenceTests.Run(); return; }
             if (arguments.Length == 2 && arguments[0] == "--audit-long-context-independence") { LongContextIndependenceTests.Audit(arguments[1]); return; }
             if (arguments.Length == 1 && arguments[0] == "--test-terra-quota-display") { Gpt61TerraTests.Run(); QuotaDisplayFilterTests.Run(); return; }
+            if (arguments.Length == 1 && arguments[0] == "--test-gpt62-ultrafast") { Gpt62PricingTests.Run(); return; }
             if (arguments.Length == 2 && arguments[0] == "--capture-quota-display") { QuotaDisplayFilterTests.Run(arguments[1]); return; }
             if (arguments.Length == 1 && arguments[0] == "--test-speed-layout") { SpeedLayoutTests.Run(); return; }
             if (arguments.Length == 2 && arguments[0] == "--capture-speed-layout") { SpeedLayoutTests.Run(arguments[1]); return; }
@@ -150,6 +151,7 @@ internal static class Program
             Gpt6SolLunaTests.Run,
             Gpt61SolTests.Run,
             Gpt61TerraTests.Run,
+            Gpt62PricingTests.Run,
             LongContextIndependenceTests.Run,
             () => QuotaDisplayFilterTests.Run(),
             AutoReviewFreeTests.Run,

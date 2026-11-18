@@ -43,7 +43,7 @@ public sealed class PricingCatalog
     /// 按本价格配置计算一次响应的两套 Standard API 等价金额。
     /// </summary>
     /// <param name="model">rollout 中记录的实际模型标识。</param>
-    /// <param name="serviceTier">响应的 Standard 或 Fast 服务层级证据。</param>
+    /// <param name="serviceTier">响应的 Standard、Fast 或 Ultrafast 服务层级证据。</param>
     /// <param name="usage">逐响应 token 分类。</param>
     /// <returns>成功时包含基础与长上下文金额，失败时保留明确原因。</returns>
     public PricingResult Calculate(string model, string serviceTier, TokenUsage usage, DateTimeOffset? timestamp = null) =>
@@ -94,7 +94,7 @@ public sealed record PricingResult(
     /// <param name="baseStandardCostUsd">不含长上下文加价且未乘额度倍率的 Standard API 成本。</param>
     /// <param name="officialLongContextStandardCostUsd">按官方长上下文规则且未乘额度倍率的成本。</param>
     /// <param name="creditMultiplier">ChatGPT 额度消耗倍率。</param>
-    /// <param name="normalizedServiceTier">standard 或 fast。</param>
+    /// <param name="normalizedServiceTier">standard、fast 或 ultrafast。</param>
     /// <param name="isLongContext">输入是否超过模型的 272K 长上下文阈值。</param>
     /// <returns>包含 Standard API 等价金额的成功结果。</returns>
     public static PricingResult Priced(
@@ -123,9 +123,9 @@ public sealed record PricingResult(
 public static class PublicApiPricing
 {
     public const string PriceSource = "https://developers.openai.com/api/docs/pricing";
-    public const string CreditMultiplierSource = "https://learn.chatgpt.com/docs/agent-configuration/speed#fast-mode";
-    public const string PriceObservedDate = "2026-10-27";
-    public const string PricingVersion = "openai-standard-2026-10-27-independent-long-context-v10";
+    public const string CreditMultiplierSource = "https://learn.chatgpt.com/docs/pricing#speed-multipliers";
+    public const string PriceObservedDate = "2026-11-18";
+    public const string PricingVersion = "openai-standard-2026-11-18-gpt62-ultrafast-v11";
     public const string AmountDefinition = "standard-api-equivalent-no-long-context-surcharge-v1";
     public const string OfficialLongContextAmountDefinition = "standard-api-equivalent-official-long-context-surcharge-v1";
     public const string AutoReviewPricingAssumption = "ChatGPT 自动审批以 2026-10-06 07:13:54.094 UTC 公告时刻为计价分界：之后免费，之前按 GPT-5.6 Luna 代理计价；非官方后台精确生效时刻";
@@ -204,10 +204,10 @@ public static class PublicApiPricing
     }
 
     /// <summary>
-    /// 使用短上下文基础价格和官方长上下文价格分别计算响应成本，再应用 ChatGPT Fast 额度倍率。
+    /// 使用短上下文基础价格和官方长上下文价格分别计算响应成本，再应用 ChatGPT 订阅速度额度倍率。
     /// </summary>
     /// <param name="model">rollout 的实际模型标识。</param>
-    /// <param name="serviceTier">明确记录的 standard/default/auto 或 fast/priority；未知值失败关闭。</param>
+    /// <param name="serviceTier">明确记录的 standard/default/auto、fast/priority 或 ultrafast；未知值失败关闭。</param>
     /// <param name="usage">该模型响应的 token 分类。</param>
     /// <returns>成功时包含美元金额，失败时包含明确原因。</returns>
     public static PricingResult Calculate(string model, string serviceTier, TokenUsage usage, DateTimeOffset? timestamp = null)
@@ -219,7 +219,7 @@ public static class PublicApiPricing
     /// </summary>
     /// <param name="profiles">按规范化模型标识索引的价格配置。</param>
     /// <param name="model">rollout 的实际模型标识。</param>
-    /// <param name="serviceTier">明确记录的 standard/default/auto 或 fast/priority。</param>
+    /// <param name="serviceTier">明确记录的 standard/default/auto、fast/priority 或 ultrafast。</param>
     /// <param name="usage">该模型响应的 token 分类。</param>
     /// <returns>成功时包含美元金额，失败时包含明确原因。</returns>
     internal static PricingResult Calculate(
@@ -246,6 +246,7 @@ public static class PublicApiPricing
                 {
                     "standard" or "default" or "auto" => "standard",
                     "fast" or "priority" => "fast",
+                    "ultrafast" => "ultrafast",
                     _ => "unknown"
                 };
                 return PricingResult.Priced(0, 0, 0, tier, false);
@@ -318,10 +319,23 @@ public static class PublicApiPricing
             return new(true, 1m, "standard", string.Empty);
         }
 
+        // 此处估算订阅内含周额度，不使用 API 或超额购入 credits 的促销倍率。
+        if (normalizedTier == "ultrafast")
+        {
+            if (normalizedModel is "gpt-6.2-astra" or "gpt-6.2-sol")
+                return new(true, 6m, "ultrafast", string.Empty);
+            if (normalizedModel is "gpt-6-astra" or "gpt-6.1-sol")
+                return new(true, 8m, "ultrafast", string.Empty);
+            return new(false, 0, string.Empty, $"官方 ChatGPT Ultrafast 文档未定义模型 {normalizedModel} 的额度倍率。");
+        }
+
         if (normalizedTier is not ("fast" or "priority"))
         {
             return new(false, 0, string.Empty, $"Standard API 等价口径不支持服务层级 {serviceTier}。");
         }
+
+        if (normalizedModel is "gpt-6.2-astra" or "gpt-6.2-sol")
+            return new(true, 2m, "fast", string.Empty);
 
         if (normalizedModel is "gpt-6-astra" or "gpt-6.1-sol" or "gpt-6.1-terra" or "gpt-6-sol" or "gpt-6-luna" ||
             normalizedModel.StartsWith("gpt-5.6-", StringComparison.Ordinal) ||
@@ -366,6 +380,8 @@ public static class PublicApiPricing
     {
         return new Dictionary<string, ModelPriceProfile>(StringComparer.OrdinalIgnoreCase)
         {
+            ["gpt-6.2-astra"] = Profile("gpt-6.2-astra", 8, 0.4m, 10, 40, 16, 0.8m, 20, 60),
+            ["gpt-6.2-sol"] = Profile("gpt-6.2-sol", 2, 0.1m, 2.5m, 10, 4, 0.2m, 5, 15),
             ["gpt-6-astra"] = Profile("gpt-6-astra", 10, 1, 12.5m, 50, 20, 2, 25, 75),
             ["gpt-6.1-sol"] = Profile("gpt-6.1-sol", 2, 0.1m, 2.5m, 10, 4, 0.2m, 5, 15),
             ["gpt-6.1-terra"] = Profile("gpt-6.1-terra", 1, 0.05m, 1.25m, 5, 2, 0.1m, 2.5m, 7.5m),

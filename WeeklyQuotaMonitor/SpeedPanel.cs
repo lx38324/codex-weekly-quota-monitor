@@ -51,7 +51,7 @@ public sealed class SpeedPanel : UserControl
     private ThemePalette? _presentationTheme;
     private Row[] _tableRows = [];
     private enum RangePreset { Retained, Hours4, Today, Hours24, Days7, Days30, Custom }
-    private string? SelectedTier => _tier.SelectedIndex switch { 1 => "standard", 2 => "fast", 3 => "unknown", _ => null };
+    private string? SelectedTier => _tier.SelectedIndex switch { 1 => "standard", 2 => "fast", 3 => "unknown", 4 => "ultrafast", _ => null };
 
     /// <summary>使用自适应说明区与可滚动表格，避免高 DPI 下固定文本高度裁切。</summary>
     public SpeedPanel()
@@ -152,7 +152,7 @@ public sealed class SpeedPanel : UserControl
             _model.SelectedIndex = selectedModel is not null && _models.Contains(selectedModel) ? Array.IndexOf(_models, selectedModel) + 1 : 0;
             _metric.Items.Clear(); _metric.Items.AddRange([UiText.Get("SpeedTotalTps"), UiText.Get("SpeedVisibleTps"), UiText.Get("SpeedStreamingTps")]);
             _metric.SelectedIndex = selectedMetric;
-            _tier.Items.Clear(); _tier.Items.AddRange(new string?[] { null, "standard", "fast", "unknown" }.Select(UiText.SpeedTierName).ToArray());
+            _tier.Items.Clear(); _tier.Items.AddRange(new string?[] { null, "standard", "fast", "unknown", "ultrafast" }.Select(UiText.SpeedTierName).ToArray());
             _tier.SelectedIndex = selectedTier; _tier.AccessibleName = UiText.Get("SpeedTier");
             _range.Items.Clear(); _range.Items.AddRange(new[] { "SpeedRetainedRange", "TimeRange4Hours", "TimeRangeToday", "TimeRange24Hours", "TimeRange7Days", "TimeRange30Days", "TimeRangeCustom" }.Select(UiText.Get).ToArray());
             _range.SelectedIndex = selectedRange; _window.ApplyLanguage();
@@ -254,7 +254,8 @@ public sealed class SpeedPanel : UserControl
         _status.Text += "\n" + UiText.Format("SpeedTierScope", scope,
             filtered.Where(b => b.ServiceTier == "standard").Sum(b => b.Count),
             filtered.Where(b => b.ServiceTier == "fast").Sum(b => b.Count),
-            filtered.Where(b => b.ServiceTier == "unknown").Sum(b => b.Count));
+            filtered.Where(b => b.ServiceTier == "unknown").Sum(b => b.Count),
+            filtered.Where(b => b.ServiceTier == "ultrafast").Sum(b => b.Count));
         if (SelectedTier == "unknown" || filtered.Any(b => b.ServiceTier == "unknown"))
             _status.Text += "\n" + UiText.Get("SpeedUnknownNote");
         _status.Text += "\n" + UiText.Format("SpeedStreamingCoverage", streamCount, allCount, allCount > 0 ? 100d * streamCount / allCount : 0);

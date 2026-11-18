@@ -33,3 +33,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${{ github.ref_name }}" ".\CodexWeeklyQuotaMonitor-${{ github.ref_name }}-win-x64.zip" --generate-notes --title "${{ github.ref_name }}"
+
+      - name: Keep binary archives for the latest three releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .\prune-release-archives.ps1 -GitHubRepository "${{ github.repository }}" -Keep 3

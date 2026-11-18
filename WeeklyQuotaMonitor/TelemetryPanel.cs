@@ -43,7 +43,7 @@ public sealed class TelemetryPanel : UserControl
     private long _revision = -1;
     private Task<TelemetryQuery>? _query;
     private QueryRequest? _request;
-    private string? SelectedTier => _tier.SelectedIndex switch { 1 => "standard", 2 => "fast", 3 => "unknown", _ => null };
+    private string? SelectedTier => _tier.SelectedIndex switch { 1 => "standard", 2 => "fast", 3 => "unknown", 4 => "ultrafast", _ => null };
     private static readonly string[] Metrics = [.. TelemetryMetrics.Names, RequestTelemetry.Metric];
 
     /// <summary>用可换行过滤器、自动高度指标卡与可滚动图表组合，刷新仅在页面可见时查询。</summary>
@@ -110,7 +110,7 @@ public sealed class TelemetryPanel : UserControl
         _origin.Items.Clear(); _origin.Items.AddRange(Origins.Select(o => UiText.Get("OtelEvidence_" + (o ?? "all"))).ToArray());
         _origin.SelectedIndex = origin; _origin.AccessibleName = UiText.Get("OtelOrigin");
         _mismatches.Text = UiText.Get("OtelMismatchesOnly");
-        _tier.Items.Clear(); _tier.Items.AddRange(new string?[] { null, "standard", "fast", "unknown" }.Select(UiText.SpeedTierName).ToArray());
+        _tier.Items.Clear(); _tier.Items.AddRange(new string?[] { null, "standard", "fast", "unknown", "ultrafast" }.Select(UiText.SpeedTierName).ToArray());
         _tier.SelectedIndex = tier; _tier.AccessibleName = UiText.Get("SpeedTier");
         _metric.Items.Clear(); _metric.Items.AddRange(TelemetryMetrics.LabelKeys.Append("OtelRequestTtft").Select(UiText.Get).ToArray()); _metric.SelectedIndex = metric;
         _range.Items.Clear(); _range.Items.AddRange(new[] { "SpeedRetainedRange", "TimeRange4Hours", "TimeRangeToday", "TimeRange24Hours", "TimeRange7Days", "TimeRange30Days", "TimeRangeCustom" }.Select(UiText.Get).ToArray()); _range.SelectedIndex = range;
@@ -256,7 +256,8 @@ public sealed class TelemetryPanel : UserControl
         _status.Text += "\n" + UiText.Format("SpeedTierScope", scope,
             data.Buckets.Where(b => b.Tier == "standard").Sum(b => b.Count),
             data.Buckets.Where(b => b.Tier == "fast").Sum(b => b.Count),
-            data.Buckets.Where(b => b.Tier == "unknown").Sum(b => b.Count));
+            data.Buckets.Where(b => b.Tier == "unknown").Sum(b => b.Count),
+            data.Buckets.Where(b => b.Tier == "ultrafast").Sum(b => b.Count));
         if (requests) _status.Text += "\n" + UiText.Get("OtelMismatchCount") + ": " + data.Buckets.Sum(b => b.ModelMismatches).ToString("N0");
         if (count == 0 || data.Buckets.Any(b => b.Tier == "unknown")) _status.Text += "\n" + UiText.Get("SpeedUnknownNote");
         if (data.Truncated) _status.Text += "\n" + UiText.Get("OtelTruncated");

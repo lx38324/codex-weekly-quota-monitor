@@ -119,8 +119,7 @@ public static class TelemetryMetrics
                     (p.Count == 0 && sum != 0)) throw new InvalidDataException("Invalid histogram count, sum, time or buckets");
                 var attributes = (resource.Resource?.Attributes ?? []).Concat(p.Attributes).ToArray();
                 var model = attributes.LastOrDefault(a => a.Key == "model")?.Value?.Text ?? "unknown";
-                var tier = attributes.LastOrDefault(a => a.Key == "service_tier")?.Value?.Text switch
-                { "priority" or "fast" => "fast", "default" or "standard" => "standard", _ => "unknown" };
+                var tier = RequestTelemetry.NormalizeTier(attributes.LastOrDefault(a => a.Key == "service_tier")?.Value?.Text);
                 if (model.Length > 160) throw new InvalidDataException("Model dimension exceeds limit");
                 // 每个资源、作用域、全部属性及启动时间共同识别序列，避免多个进程的累计值互相覆盖。
                 var identity = JsonSerializer.Serialize(new { Resource = Canonical(resource.Resource?.Attributes ?? []),

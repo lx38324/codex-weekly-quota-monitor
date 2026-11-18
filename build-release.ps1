@@ -3,6 +3,9 @@ param(
     [string]$OutputDirectory
 )
 
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $appProject = Join-Path $projectRoot 'WeeklyQuotaMonitor\WeeklyQuotaMonitor.csproj'
 $testProject = Join-Path $projectRoot 'WeeklyQuotaMonitor.BusinessTests\WeeklyQuotaMonitor.BusinessTests.csproj'
@@ -17,6 +20,8 @@ dotnet (Join-Path $testOutput 'WeeklyQuotaMonitor.BusinessTests.dll')
 if ($LASTEXITCODE -ne 0) {
     throw '业务测试执行失败。'
 }
+
+& (Join-Path $projectRoot 'test-release-retention.ps1')
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 dotnet publish $appProject `
@@ -55,3 +60,7 @@ Set-Content `
     -Encoding utf8NoBOM `
     -NoNewline
 Write-Host "发布完成：$OutputDirectory"
+if ((Split-Path -Leaf $resolvedOutput) -match '^(?:Codex周限额监控|CodexWeeklyQuotaMonitor)-v\d+\.\d+\.\d+(?:-win-x64)?$') {
+    # 仅成功构建版本化安装包后清理同目录旧归档，测试或发布失败时保留原来的三个可用版本。
+    & (Join-Path $projectRoot 'prune-release-archives.ps1') -ArchiveDirectory (Split-Path -Parent $resolvedOutput) -Keep 3
+}

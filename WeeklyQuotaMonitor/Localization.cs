@@ -88,7 +88,7 @@ public static class UiText
     /// <summary>为速度筛选、图例和明细统一显示层级；空值表示全部，未识别证据不冒充 Standard。</summary>
     public static string SpeedTierName(string? tier) => Get(tier switch
     {
-        null => "SpeedAllTiers", "standard" => "SpeedStandard", "fast" => "SpeedFast", _ => "SpeedUnknown"
+        null => "SpeedAllTiers", "standard" => "SpeedStandard", "fast" => "SpeedFast", "ultrafast" => "SpeedUltrafast", _ => "SpeedUnknown"
     });
 
     /// <summary>

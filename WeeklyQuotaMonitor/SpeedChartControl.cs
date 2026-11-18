@@ -137,15 +137,17 @@ public sealed class SpeedChartControl : Control
 
     /// <summary>统一图例与折线线型，未知证据采用点线而不是标准实线。</summary>
     private static DashStyle TierDashStyle(string tier) => tier switch
-    { "fast" => DashStyle.Dash, "standard" => DashStyle.Solid, _ => DashStyle.Dot };
+    { "fast" => DashStyle.Dash, "ultrafast" => DashStyle.DashDot, "standard" => DashStyle.Solid, _ => DashStyle.Dot };
 
-    /// <summary>单点也通过形状区分模式：标准圆点、Fast 菱形、未知方点。</summary>
+    /// <summary>单点也通过形状区分模式：标准圆点、Fast 菱形、Ultrafast 三角、未知方点。</summary>
     private static void DrawMarker(Graphics graphics, PointF point, Color color, string tier, float scale)
     {
         using var brush = new SolidBrush(color);
         var radius = 3.5f * scale;
         if (tier == "fast") graphics.FillPolygon(brush, new PointF[] { new(point.X, point.Y - radius), new(point.X + radius, point.Y),
             new(point.X, point.Y + radius), new(point.X - radius, point.Y) });
+        else if (tier == "ultrafast") graphics.FillPolygon(brush, new PointF[] { new(point.X, point.Y - radius),
+            new(point.X + radius, point.Y + radius), new(point.X - radius, point.Y + radius) });
         else if (tier == "standard") graphics.FillEllipse(brush, point.X - radius, point.Y - radius, radius * 2, radius * 2);
         else graphics.FillRectangle(brush, point.X - radius, point.Y - radius, radius * 2, radius * 2);
     }

@@ -73,7 +73,7 @@ public sealed record SpeedBucket(DateTimeOffset Start, DateTimeOffset End, strin
 /// <summary>还原日志边界并汇总速度；不依赖账号额度接口，也不推断日志中不存在的 TTFT。</summary>
 public static class SpeedMonitoring
 {
-    /// <summary>读取新增完整日志；旧速度缓存保留样本并一次性补读有近期数据的来源以补流式证据，不影响额度游标。</summary>
+    /// <summary>读取新增完整日志；旧缓存一次性补读近期来源以恢复流式及 Ultrafast 证据，保留样本、不影响额度游标。</summary>
     public static SpeedState Scan(SpeedState previous, IReadOnlyCollection<string> roots,
         DateTimeOffset now, int historyHours, CancellationToken cancellationToken = default)
     {
@@ -104,8 +104,8 @@ public static class SpeedMonitoring
             var info = new FileInfo(path);
             if (!state.Cursors.TryGetValue(source, out var cursor) || cursor.CreationTicks != info.CreationTimeUtc.Ticks ||
                 info.Length < cursor.Length || (info.Length == cursor.Length && info.LastWriteTimeUtc.Ticks != cursor.WriteTicks) ||
-                cursor.EvidenceVersion < 1 && (info.Length > cursor.Offset || recentSources.Contains(source)))
-                cursor = new SpeedCursor { CreationTicks = info.CreationTimeUtc.Ticks, EvidenceVersion = 1 };
+                cursor.EvidenceVersion < 2 && (info.Length > cursor.Offset || recentSources.Contains(source)))
+                cursor = new SpeedCursor { CreationTicks = info.CreationTimeUtc.Ticks, EvidenceVersion = 2 };
             // 元数据已在上方验证轮转、截短和同长改写；已消费到末尾时无需再次打开文件。
             // 未完成的尾行仍保留旧游标，追加换行后会继续读取。
             var offset = cursor.Offset == info.Length ? cursor.Offset : RolloutLogReader.ProcessCompleteLines(path, cursor.Offset, line =>
@@ -123,7 +123,8 @@ public static class SpeedMonitoring
                             var old = state.Samples[index];
                             if (old.OutputTokens != sample.OutputTokens || old.ReasoningTokens != sample.ReasoningTokens)
                                 throw new InvalidDataException("旧速度摘要与日志用量冲突，未覆盖旧样本。");
-                            state.Samples[index] = old with { StreamingStartedAt = sample.StreamingStartedAt, StreamingStatus = sample.StreamingStatus };
+                            state.Samples[index] = old with { ServiceTier = sample.ServiceTier,
+                                StreamingStartedAt = sample.StreamingStartedAt, StreamingStatus = sample.StreamingStatus };
                         }
                         else { known[key] = state.Samples.Count; state.Samples.Add(sample); }
                     }
@@ -244,9 +245,9 @@ public static class SpeedMonitoring
     private static string? Text(JsonElement value, string name) => value.TryGetProperty(name, out var field) &&
         field.ValueKind == JsonValueKind.String ? field.GetString() : null;
 
-    /// <summary>严格区分日志明确记录的 Standard、Fast 和未知层级，不使用当前配置追认过去。</summary>
+    /// <summary>严格区分日志明确记录的 Standard、Fast、Ultrafast 和未知层级，不使用当前配置追认过去。</summary>
     private static string NormalizeTier(string? tier) => tier switch
-    { "default" or "standard" or "auto" => "standard", "priority" or "fast" => "fast", _ => "unknown" };
+    { "default" or "standard" or "auto" => "standard", "priority" or "fast" => "fast", "ultrafast" => "ultrafast", _ => "unknown" };
 
     /// <summary>按完成时间筛选后分模型/层级聚合；流式分子分母仅使用同一批有效证据，缺失不会用原TPS补值。</summary>
     public static IReadOnlyList<SpeedBucket> Aggregate(IReadOnlyList<SpeedSample> samples, SpeedOptions options, DateTimeOffset now,

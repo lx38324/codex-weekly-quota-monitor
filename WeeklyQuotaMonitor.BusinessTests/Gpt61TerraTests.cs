@@ -31,7 +31,7 @@ internal static class Gpt61TerraTests
             .Append(customSol).ToList();
         var settings = JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(new AppSettings
             { SettingsSchemaVersion = 10, ModelPrices = previous }))!;
-        Check(AppSettingsMigration.Apply(settings) && settings.SettingsSchemaVersion == 11 &&
+        Check(AppSettingsMigration.Apply(settings) && settings.SettingsSchemaVersion == AppSettingsMigration.CurrentVersion &&
             settings.ModelPrices.Single(p => p.Model == "gpt-6.1-sol") == customSol &&
             settings.ModelPrices.Count(p => p.Model == "gpt-6.1-terra") == 1,
             "新模型未补入或覆盖了用户其他模型的缓存写、长上下文配置。");

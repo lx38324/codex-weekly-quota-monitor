@@ -124,7 +124,7 @@
   <data name="PricingCacheWriteEnabled" xml:space="preserve"><value>启用</value></data>
   <data name="PricingRestoreBuiltIn" xml:space="preserve"><value>恢复内置价格</value></data>
   <data name="PricingRestoredPending" xml:space="preserve"><value>已恢复内置价格，点击“保存并应用”后生效。</value></data>
-  <data name="SettingsNote" xml:space="preserve"><value>{0} 会在每次启动时解析当前 Codex Desktop 包。金额使用公开 Standard API 价格 × ChatGPT Fast 额度倍率（核对日期 {1}）。Auto-review 假设：{2}。金额是估计，不是订阅账单。</value></data>
+  <data name="SettingsNote" xml:space="preserve"><value>{0} 会在每次启动时解析当前 Codex Desktop 包。金额使用公开 Standard API 价格 × ChatGPT 订阅速度倍率（核对日期 {1}）。6.2 Fast 2× / Ultrafast 6×；6 Astra、6.1 Sol Ultrafast 8×，不使用 API 促销倍率。Auto-review 假设：{2}。金额是估计，不是订阅账单。</value></data>
   <data name="SaveApply" xml:space="preserve"><value>保存并应用</value></data>
   <data name="Revert" xml:space="preserve"><value>撤销未保存修改</value></data>
   <data name="RestoreDefaults" xml:space="preserve"><value>恢复默认值</value></data>
@@ -211,7 +211,7 @@
   <data name="SpeedDisabled" xml:space="preserve"><value>速度监测已关闭。</value></data>
   <data name="SpeedNoSamples" xml:space="preserve"><value>尚无满足条件的速度样本</value></data>
   <data name="SpeedLatest" xml:space="preserve"><value>最近一组（{3} · {4}）：总输出 {0:N2} TPS · 可见输出 {1:N2} TPS · {2} 次响应</value></data>
-  <data name="SpeedMeasurementNote" xml:space="preserve"><value>端到端吞吐估计 = 总输出 token ÷ 总响应耗时（含等待、预填充和传输，扣除可识别工具等待）；不是纯解码速度。按模型及 Standard/Fast/unknown 分组；修改分组参数后重新汇总。</value></data>
+  <data name="SpeedMeasurementNote" xml:space="preserve"><value>端到端吞吐估计 = 总输出 token ÷ 总响应耗时（含等待、预填充和传输，扣除可识别工具等待）；不是纯解码速度。按模型及 Standard/Fast/Ultrafast/unknown 分组；修改分组参数后重新汇总。</value></data>
   <data name="SpeedTtftUnavailable" xml:space="preserve"><value>JSONL TTFT：不可用。rollout 没有可靠的首 token 时间戳；实时遥测请切换 OTel · TTFT 标签。</value></data>
   <data name="SpeedRetained" xml:space="preserve"><value>保留 {0} 条响应摘要 · 仅统计耗时 ≥ {1} 秒 · 最近 {2} 小时；设置 → 速度监测可调整。</value></data>
   <data name="SpeedStart" xml:space="preserve"><value>区间开始（本地）</value></data>
@@ -221,8 +221,9 @@
   <data name="SpeedAllTiers" xml:space="preserve"><value>全部速度模式（混合均值）</value></data>
   <data name="SpeedStandard" xml:space="preserve"><value>Standard（标准）</value></data>
   <data name="SpeedFast" xml:space="preserve"><value>Fast（加速）</value></data>
+  <data name="SpeedUltrafast" xml:space="preserve"><value>Ultrafast（极速）</value></data>
   <data name="SpeedUnknown" xml:space="preserve"><value>未知速度模式</value></data>
-  <data name="SpeedTierScope" xml:space="preserve"><value>{0} · 标准 {1:N0} / 加速 {2:N0} / 未知 {3:N0}</value></data>
+  <data name="SpeedTierScope" xml:space="preserve"><value>{0} · 标准 {1:N0} / 加速 {2:N0} / 极速 {4:N0} / 未知 {3:N0}</value></data>
   <data name="SpeedUnknownNote" xml:space="preserve"><value>未知表示未保留可靠的速度模式标记，不使用当前配置倒推历史观测。</value></data>
   <data name="SpeedSamples" xml:space="preserve"><value>响应数</value></data>
   <data name="SpeedTotalTps" xml:space="preserve"><value>总输出 TPS</value></data>
@@ -232,7 +233,7 @@
   <data name="SpeedComplete" xml:space="preserve"><value>已完成</value></data>
   <data name="SpeedPartial" xml:space="preserve"><value>部分</value></data>
   <data name="SpeedAllModels" xml:space="preserve"><value>全部模型</value></data>
-  <data name="SpeedLineStyles" xml:space="preserve"><value>实线 Standard · 虚线 Fast · 点线 unknown · 纵轴 TPS</value></data>
+  <data name="SpeedLineStyles" xml:space="preserve"><value>实线 Standard · 虚线 Fast · 点划线 Ultrafast · 点线 unknown · 纵轴 TPS</value></data>
   <data name="TimeRangeCustom" xml:space="preserve"><value>自定义起止时间</value></data>
   <data name="WindowFrom" xml:space="preserve"><value>开始（本地）</value></data>
   <data name="WindowTo" xml:space="preserve"><value>结束（本地）</value></data>
@@ -279,7 +280,7 @@
   <data name="OtelLastError" xml:space="preserve"><value>最近错误（未清除记录）：</value></data>
   <data name="OtelReadFailed" xml:space="preserve"><value>遥测刷新失败，当前图表不是最新结果：</value></data>
   <data name="OtelTruncated" xml:space="preserve"><value>结果超过 10,000 组，仅展示最近部分；请缩短窗口或增大聚合分钟。</value></data>
-  <data name="SpeedMetricLineStyles" xml:space="preserve"><value>实线 Standard · 虚线 Fast · 点线 unknown · 纵轴 {0}</value></data>
+  <data name="SpeedMetricLineStyles" xml:space="preserve"><value>实线 Standard · 虚线 Fast · 点划线 Ultrafast · 点线 unknown · 纵轴 {0}</value></data>
   <data name="OtelRequestTtft" xml:space="preserve"><value>请求 TTFT（日志事件）</value></data>
   <data name="OtelTierSource" xml:space="preserve"><value>模式来源</value></data>
   <data name="OtelEventTime" xml:space="preserve"><value>原始事件时间</value></data>

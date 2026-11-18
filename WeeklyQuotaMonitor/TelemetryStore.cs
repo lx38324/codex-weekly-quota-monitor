@@ -144,7 +144,7 @@ public sealed partial class TelemetryStore
     /// <summary>按模型及明确速度模式限定导航边界和观测，再按结束时间聚合；未知不并入标准。</summary>
     public TelemetryQuery Query(string metric, string? model, DateTimeOffset start, DateTimeOffset end, int minutes, string? tier = null, string? origin = null, bool mismatchesOnly = false)
     {
-        if (tier is not (null or "standard" or "fast" or "unknown")) throw new ArgumentOutOfRangeException(nameof(tier));
+        if (tier is not (null or "standard" or "fast" or "ultrafast" or "unknown")) throw new ArgumentOutOfRangeException(nameof(tier));
         if (minutes <= 0) throw new ArgumentOutOfRangeException(nameof(minutes));
         if (metric == RequestTelemetry.Metric) return QueryRequests(model, start, end, minutes, tier, origin, mismatchesOnly);
         using var db = Open();

@@ -61,7 +61,7 @@ public static class RequestTelemetry
 
     /// <summary>缺失与不支持的层级不能冒充 Standard；是否缺失由调用方单独保留。</summary>
     public static string NormalizeTier(string? tier) => tier switch
-    { "priority" or "fast" => "fast", "default" or "standard" => "standard", _ => "unknown" };
+    { "priority" or "fast" => "fast", "default" or "standard" => "standard", "ultrafast" => "ultrafast", _ => "unknown" };
 
     /// <summary>只识别明确的用途元数据；缺失或冲突不根据模型名、会话 ID 推断用途，不保存原始属性。</summary>
     private static string ReadOrigin(Dictionary<string, OtlpValue?> attributes)
@@ -127,7 +127,7 @@ public sealed class RequestModeIndex
         var (association, sample) = Match(request);
         if (association.State == "ambiguous") return ("unknown", "ambiguous");
         if (association.State == "model-mismatch") return ("unknown", "rollout-model-mismatch");
-        return sample?.ServiceTier is "standard" or "fast" ? (sample.ServiceTier, "rollout") : ("unknown", "unknown");
+        return sample?.ServiceTier is "standard" or "fast" or "ultrafast" ? (sample.ServiceTier, "rollout") : ("unknown", "unknown");
     }
 
     /// <summary>独立记录本地响应关联，即使事件已直报速度，也保留模型差异和匹配强度。</summary>

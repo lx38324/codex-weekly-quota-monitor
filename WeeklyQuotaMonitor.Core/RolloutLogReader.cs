@@ -1061,19 +1061,20 @@ public sealed partial class RolloutLogReader
     /// 把 Codex 配置层级归一化为公开计价器支持的 Standard 或 Fast 请求值。
     /// </summary>
     /// <param name="serviceTier">config.toml 中的原始层级。</param>
-    /// <returns>default 或 priority。</returns>
+    /// <returns>default、priority 或 ultrafast；不支持的配置保留原始错误。</returns>
     private static string NormalizeConfiguredServiceTier(string serviceTier) =>
         serviceTier.Trim().ToLowerInvariant() switch
         {
             "standard" or "default" or "auto" => "default",
             "fast" or "priority" => "priority",
+            "ultrafast" => "ultrafast",
             _ => throw new InvalidDataException($"config.toml 的 service_tier 无法按当前公开口径计价：{serviceTier}")
         };
 
     /// <summary>
     /// 为展示层保留配置回填来源，避免把推导层级误报为 rollout 原生字段。
     /// </summary>
-    /// <param name="normalizedServiceTier">定价器返回的 standard 或 fast。</param>
+    /// <param name="normalizedServiceTier">定价器返回的 standard、fast 或 ultrafast。</param>
     /// <param name="serviceTierFromConfig">是否由配置证据回填。</param>
     /// <returns>带可选 config 来源标记的层级标签。</returns>
     public static string FormatServiceTierEvidence(

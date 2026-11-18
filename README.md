@@ -41,13 +41,13 @@ pwsh -ExecutionPolicy Bypass -File .\install.ps1
 - **Standard API 等价周额度（默认）**：按公开 Standard API 常规价格估算。
 - **官方 >272K 加价（可选）**：输入超过 272K 时，按官方规则对整次请求应用输入类 2×、输出 1.5×；仅在设置中显式启用后显示。
 
-两种口径都会应用识别到的 ChatGPT Fast 额度倍率。断网或旧日志缺少层级时，仅在会话创建前已有明确 `config.toml` 层级证据时恢复并标注 `(config)`；其余未知模型、层级或区间继续失败关闭。
+两种口径都会应用识别到的 ChatGPT 订阅速度倍率：6.2 Astra/Sol 的 Fast 2×、Ultrafast 6×；6 Astra/6.1 Sol 的 Ultrafast 8×。[官方倍率](https://learn.chatgpt.com/docs/pricing#speed-multipliers)。断网或旧日志缺少层级时，仅在会话创建前已有明确 `config.toml` 层级证据时恢复并标注 `(config)`；其余未知模型、层级或区间继续失败关闭。
 
 ## 数据与隐私
 
 额度、TPS、OTel 默认均为**最近 4 小时**，支持滚轮缩放、拖拽平移、双击复位；额度和 TPS 表格不随缩放裁剪。可选当天或自定义时间；当天起点在**设置 → 常规**调整。TPS 是端到端估计；**速度 → OTel · TTFT** 可查看按模型区分的首 token 延迟等遥测，需 Codex 实际向 `http://127.0.0.1:4318/v1/metrics` 输出 OTLP/HTTP binary 指标。
 
-两张速度图都可筛选 Standard、Fast 或未知模式，卡片与明细同步。全部模式显示混合均值；未知表示数据缺少可靠模式标记，不会按当前配置推断。
+两张速度图都可筛选 Standard、Fast、Ultrafast 或未知模式，卡片与明细同步。全部模式显示混合均值；未知表示数据缺少可靠模式标记，不会按当前配置推断。
 
 速度 → TPS 的指标下拉可选**流式阶段估计 TPS**：按可信输出 item 起点排除前置等待，并显示同批原 TPS 对照、覆盖率及排除原因。只使用 ID 对齐且逐响应用量一致的记录；缺失不补值。仍包含传输和缓冲，不是服务端纯解码速度。旧速度缓存会保留并后台补读现存日志，无需重新采样。
 
@@ -70,6 +70,8 @@ pwsh -ExecutionPolicy Bypass -File .\install.ps1
 - [安全策略](SECURITY.md)
 
 ## 开发
+
+发布归档只保留最近 3 次：版本化本地打包成功后自动清理同目录旧包，GitHub 发布成功后清理旧版二进制附件；Git 标签、发布说明和监控数据保留。
 
 需要 Windows、PowerShell 7 和 .NET 9 SDK：
 

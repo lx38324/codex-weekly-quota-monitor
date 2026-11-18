@@ -135,7 +135,7 @@ public sealed class AppSettings
 /// </summary>
 public static class AppSettingsMigration
 {
-    public const int CurrentVersion = 11;
+    public const int CurrentVersion = 12;
     public const decimal LegacyMaximumSampleUsd = 1000m;
     public const decimal DefaultMaximumSampleUsd = 10000m;
 
@@ -154,6 +154,16 @@ public static class AppSettingsMigration
         }
 
         var changed = false;
+        // 6.2 仅补入缺失项；保留同名自定义价格，不修改缓存写和长上下文偏好。
+        if (settings.SettingsSchemaVersion < 12 && settings.ModelPrices is { Count: > 0 })
+        {
+            foreach (var profile in PublicApiPricing.GetBuiltInProfiles().Where(p => p.Model is "gpt-6.2-astra" or "gpt-6.2-sol"))
+                if (!settings.ModelPrices.Any(p => string.Equals(p.Model?.Trim(), profile.Model, StringComparison.OrdinalIgnoreCase)))
+                {
+                    settings.ModelPrices.Add(profile);
+                    changed = true;
+                }
+        }
         // 新模型只补齐一次；保留用户已手动添加的同名价格及其他模型的自定义配置。
         // 空价格表仍由正常验证报错，不以迁移掩盖损坏或无效配置。
         if (settings.SettingsSchemaVersion < 8 && settings.ModelPrices is { Count: > 0 })

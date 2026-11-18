@@ -29,3 +29,7 @@ jobs:
 
       - name: Run business tests
         run: dotnet .\WeeklyQuotaMonitor.BusinessTests\bin\Release\net9.0-windows\WeeklyQuotaMonitor.BusinessTests.dll
+
+      - name: Verify release archive retention
+        shell: pwsh
+        run: .\test-release-retention.ps1

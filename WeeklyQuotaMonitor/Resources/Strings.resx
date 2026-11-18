@@ -124,7 +124,7 @@ Table (selected range): {3} points · view {4} · archived {5} · pending {6}{7}
   <data name="PricingCacheWriteEnabled" xml:space="preserve"><value>Enable</value></data>
   <data name="PricingRestoreBuiltIn" xml:space="preserve"><value>Restore built-in prices</value></data>
   <data name="PricingRestoredPending" xml:space="preserve"><value>Built-in prices restored. Choose Save and apply to activate them.</value></data>
-  <data name="SettingsNote" xml:space="preserve"><value>{0} resolves the currently installed Codex Desktop package at every launch. Amounts use public Standard API prices × ChatGPT Fast credit multipliers (checked {1}). Auto-review assumption: {2}. Values are estimates, not subscription bills.</value></data>
+  <data name="SettingsNote" xml:space="preserve"><value>{0} resolves the current Codex Desktop package at launch. Amounts use public Standard API prices × included-usage speed multipliers (checked {1}). GPT-6.2: Fast 2× / Ultrafast 6×; GPT-6 Astra and GPT-6.1 Sol: Ultrafast 8×. API promotions do not apply. Auto-review assumption: {2}. Values are estimates, not subscription bills.</value></data>
   <data name="SaveApply" xml:space="preserve"><value>Save and apply</value></data>
   <data name="Revert" xml:space="preserve"><value>Revert unsaved changes</value></data>
   <data name="RestoreDefaults" xml:space="preserve"><value>Restore defaults</value></data>
@@ -211,7 +211,7 @@ Table (selected range): {3} points · view {4} · archived {5} · pending {6}{7}
   <data name="SpeedDisabled" xml:space="preserve"><value>Speed monitoring is disabled.</value></data>
   <data name="SpeedNoSamples" xml:space="preserve"><value>No eligible speed samples yet</value></data>
   <data name="SpeedLatest" xml:space="preserve"><value>Latest ({3} · {4}): total {0:N2} TPS · visible {1:N2} TPS · {2} responses</value></data>
-  <data name="SpeedMeasurementNote" xml:space="preserve"><value>End-to-end throughput proxy = output tokens / summed response durations. Includes waiting, prefill and transport; excludes identifiable tool waits. Not pure decoding speed. Grouped by model and Standard/Fast/unknown. Settings changes regroup retained data.</value></data>
+  <data name="SpeedMeasurementNote" xml:space="preserve"><value>End-to-end throughput proxy = output tokens / summed response durations. Includes waiting, prefill and transport; excludes identifiable tool waits. Not pure decoding speed. Grouped by model and Standard/Fast/Ultrafast/unknown. Settings changes regroup retained data.</value></data>
   <data name="SpeedTtftUnavailable" xml:space="preserve"><value>JSONL TTFT is unavailable: rollout logs lack reliable first-token timestamps. See the OTel · TTFT tab for live telemetry.</value></data>
   <data name="SpeedRetained" xml:space="preserve"><value>{0} retained responses · Duration ≥ {1} seconds · Last {2} hours. Configure in Settings → Speed monitor.</value></data>
   <data name="SpeedStart" xml:space="preserve"><value>Start (local)</value></data>
@@ -221,8 +221,9 @@ Table (selected range): {3} points · view {4} · archived {5} · pending {6}{7}
   <data name="SpeedAllTiers" xml:space="preserve"><value>All speed modes (combined)</value></data>
   <data name="SpeedStandard" xml:space="preserve"><value>Standard</value></data>
   <data name="SpeedFast" xml:space="preserve"><value>Fast</value></data>
+  <data name="SpeedUltrafast" xml:space="preserve"><value>Ultrafast</value></data>
   <data name="SpeedUnknown" xml:space="preserve"><value>Unknown mode</value></data>
-  <data name="SpeedTierScope" xml:space="preserve"><value>{0} · Standard {1:N0} / Fast {2:N0} / Unknown {3:N0}</value></data>
+  <data name="SpeedTierScope" xml:space="preserve"><value>{0} · Standard {1:N0} / Fast {2:N0} / Ultrafast {4:N0} / Unknown {3:N0}</value></data>
   <data name="SpeedUnknownNote" xml:space="preserve"><value>Unknown means no reliable speed-mode label was retained; current settings are not applied to historical observations.</value></data>
   <data name="SpeedSamples" xml:space="preserve"><value>Responses</value></data>
   <data name="SpeedTotalTps" xml:space="preserve"><value>Total TPS</value></data>
@@ -232,7 +233,7 @@ Table (selected range): {3} points · view {4} · archived {5} · pending {6}{7}
   <data name="SpeedComplete" xml:space="preserve"><value>Complete</value></data>
   <data name="SpeedPartial" xml:space="preserve"><value>Partial</value></data>
   <data name="SpeedAllModels" xml:space="preserve"><value>All models</value></data>
-  <data name="SpeedLineStyles" xml:space="preserve"><value>Solid: Standard · Dashed: Fast · Dotted: unknown · Y: TPS</value></data>
+  <data name="SpeedLineStyles" xml:space="preserve"><value>Solid Standard · Dashed Fast · Dash-dot Ultrafast · Dotted unknown · Y: TPS</value></data>
   <data name="TimeRangeCustom" xml:space="preserve"><value>Custom dates</value></data>
   <data name="WindowFrom" xml:space="preserve"><value>From (local)</value></data>
   <data name="WindowTo" xml:space="preserve"><value>To (local)</value></data>
@@ -279,7 +280,7 @@ Table (selected range): {3} points · view {4} · archived {5} · pending {6}{7}
   <data name="OtelLastError" xml:space="preserve"><value>Last recorded error:</value></data>
   <data name="OtelReadFailed" xml:space="preserve"><value>Telemetry refresh failed; displayed chart is stale:</value></data>
   <data name="OtelTruncated" xml:space="preserve"><value>More than 10,000 groups; only the most recent are displayed. Narrow the window or increase bucket minutes.</value></data>
-  <data name="SpeedMetricLineStyles" xml:space="preserve"><value>Solid Standard · Dashed Fast · Dotted unknown · Y-axis {0}</value></data>
+  <data name="SpeedMetricLineStyles" xml:space="preserve"><value>Solid Standard · Dashed Fast · Dash-dot Ultrafast · Dotted unknown · Y-axis {0}</value></data>
   <data name="OtelRequestTtft" xml:space="preserve"><value>Request TTFT (log events)</value></data>
   <data name="OtelTierSource" xml:space="preserve"><value>Mode source</value></data>
   <data name="OtelEventTime" xml:space="preserve"><value>Original event time</value></data>

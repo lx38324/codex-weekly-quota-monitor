@@ -44,7 +44,7 @@ The main window contains:
 - **Standard API-equivalent weekly quota (default)** uses public Standard API regular prices.
 - **Official >272K surcharge (optional)** applies the published 2× input-class and 1.5× output rule when request input exceeds 272K, and appears only after explicit opt-in.
 
-Both apply recognized ChatGPT Fast credit multipliers. If an offline or legacy log omits its tier, recovery requires explicit `config.toml` evidence that predates the session and is labeled `(config)`; all other unknown models, tiers, or intervals still fail closed.
+Both apply included-usage speed multipliers: GPT-6.2 Astra/Sol use Fast 2× and Ultrafast 6×; GPT-6 Astra/GPT-6.1 Sol use Ultrafast 8×. See [official multipliers](https://learn.chatgpt.com/docs/pricing#speed-multipliers). If an offline or legacy log omits its tier, recovery requires explicit `config.toml` evidence that predates the session and is labeled `(config)`; all other unknown models, tiers, or intervals still fail closed.
 
 ## Privacy
 
@@ -53,6 +53,8 @@ Image generation consumes Codex allowance, but observed local logs do not expose
 The utility stores settings, quota checkpoints, token aggregates, per-response pricing details, cursors, samples, and operational diagnostics. It does not store conversation text, tool-output text, credentials, or raw App Server stderr.
 
 ## Development
+
+Only the latest three release archives are retained. Successful versioned local builds prune older sibling packages; successful GitHub releases prune older binary assets. Git tags, release notes, and monitoring data remain available.
 
 Requires Windows, PowerShell 7, and the .NET 9 SDK:
 
